@@ -104,3 +104,37 @@ def visual(true, pred, name='./pic/test.pdf'):
     plt.tight_layout()
     plt.savefig(name, bbox_inches='tight')
     plt.close()
+
+def get_annealed_sampling_prob(args, current_epoch):
+    """
+    计算当前 epoch 对应的 "预定采样" 概率 (线性退火)
+    
+    - 在 [0, start] epoch 内, 概率为 PROB_START (例如 1.0)
+    - 在 [start, end] epoch 内, 概率从 PROB_START 线性下降到 PROB_END
+    - 在 [end, max] epoch 后, 概率保持为 PROB_END (例如 0.2)
+    """
+    
+    start_epoch = args.ANNEAL_START_EPOCH
+    end_epoch = args.ANNEAL_END_EPOCH
+    prob_start = args.PROB_START
+    prob_end = args.PROB_END
+
+    if current_epoch < start_epoch:
+        # 1. 预热阶段
+        return prob_start
+    
+    if current_epoch >= end_epoch:
+        # 3. 稳定阶段
+        return prob_end
+    
+    # 2. 退火阶段
+    # 计算退火区间的进度 (0.0 -> 1.0)
+    total_anneal_epochs = end_epoch - start_epoch
+    epoch_progress = current_epoch - start_epoch
+    progress = epoch_progress / total_anneal_epochs
+    
+    # 线性插值
+    total_prob_drop = prob_start - prob_end
+    current_prob = prob_start - (total_prob_drop * progress)
+    
+    return current_prob

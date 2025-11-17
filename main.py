@@ -3,8 +3,8 @@ import os
 import torch
 import random
 import numpy as np
-from exp.exp_forecasting import Exp_Forecasting
-
+from exp.exp_forecasting_V2 import Exp_Forecasting
+import time
 
 def set_seed(seed):
     """
@@ -28,11 +28,11 @@ def get_args():
     # ==================== 基本配置 ====================
     parser.add_argument('--task_name', type=str, default='ship_trajectory_forecast',
                         help='task name')
-    parser.add_argument('--is_training', type=int, default=0,
+    parser.add_argument('--is_training', type=int, default=1,
                         help='status: 1 for training, 0 for testing')
     parser.add_argument('--model_id', type=str, default='ship_traj',
                         help='model id')
-    parser.add_argument('--model', type=str, default='ASTGNN_v2_0',
+    parser.add_argument('--model', type=str, default='V2_2_ASTGNN',
                         help='model name')
     
     # ==================== 数据配置 ====================
@@ -124,6 +124,16 @@ def get_args():
     parser.add_argument('--des', type=str, default='Exp',
                         help='experiment description')
     
+    # ==================== 采样概率配置 ====================
+    parser.add_argument('--ANNEAL_START_EPOCH', type=int, default=1,
+                        help='epoch to start annealing sampling probability')
+    parser.add_argument('--ANNEAL_END_EPOCH', type=int, default=50,
+                        help='epoch to end annealing sampling probability')
+    parser.add_argument('--PROB_START', type=float, default=1.0,
+                        help='initial sampling probability')
+    parser.add_argument('--PROB_END', type=float, default=0.2,
+                        help='final sampling probability')
+    
     args = parser.parse_args()
     
     # 处理多GPU设置
@@ -154,7 +164,7 @@ def main():
     print('=' * 80)
     
     # 构建实验设置名称
-    setting = '{}_{}_sl{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_{}_{}'.format(
+    setting = '{}_{}_sl{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_{}_{}_2'.format(
         args.model_id,
         args.model,
         args.seq_len,
