@@ -7,12 +7,20 @@ import numpy as np
 from utils.get_loss_function import get_loss_function
 
 """
-针对 V2.2 版本 ASTGNN 的改进版
+针对 V2.2.1 版本 ASTGNN 的改进版
 
-添加 社会力矩阵
+社会影响力矩阵，变成 "语义" 社会力矩阵， 结合TCPA/DCPA 避碰规则
+对应 DataLoader 中的 _build_semantic_social_matrix 方法
+
+具体修改：
+这是一个非常关键的架构升级。
+
+为了让模型能够处理 DataLoader 传来的 4 通道 语义矩阵 [T, N, N, 4]（包含头碰、右舷交叉等规则信息），我们需要修改 DynamicSpatialGNN，让它能够学习如何融合这 4 种不同的规则。
+
+我们不需要 4 个独立的 GCN（那样太重了）。最好的方法是引入一个可学习的投影层，让模型自己去权衡这 4 种规则的重要性（例如，自动学会“右舷交叉”的权重应该比“左舷交叉”更高）。
+
 
 """
-
 
 # 矩阵稀疏性测试
 def analyze_sparsity(matrix, name="Matrix"):
@@ -56,6 +64,7 @@ def analyze_sparsity(matrix, name="Matrix"):
             c_name = channel_names[k] if k < len(channel_names) else f"Channel {k}"
             print(f"  {c_name}: Sparsity = {c_sparsity*100:.4f}% | Non-zeros = {c_nz}")
     print("-" * 30 + "\n")
+
 
 # ----------------------------------------------------------------------
 # 模块 1: 帮助函数 (来自您之前的文件)
@@ -176,58 +185,44 @@ class TrendAwareAttention(nn.Module):
 # ----------------------------------------------------------------------
 # 模块 3: 动态空间 GNN (来自 ASTGNN [cite: 320, 332])
 # ----------------------------------------------------------------------
+# [在 ShipASTGNN_Model 文件中]
+
 class DynamicSpatialGNN(nn.Module):
     """
-    ASTGNN 的核心：动态 GCN (spatialAttentionScaledGCN)
-    在 "N" 维度上操作
-    
-    原始论文公式: X_t = σ((A ⊙ S_t) * Z_t * W) 
-    - A = 静态邻接矩阵 [cite: 329]
-    - S_t = 动态自注意力矩阵 
-    
-    我们的适配:
-    由于没有静态 A, 我们假设 A 是全 1 矩阵 (全连接)
-    公式简化为: X_t = σ((1 ⊙ S_t) * Z_t * W) = σ(S_t * Z_t * W)
+    ASTGNN 的核心：动态 GCN
+    [已修改] 接收 4 通道的语义社会力矩阵，并通过可学习的层进行融合。
     """
     def __init__(self, d_model, num_nodes, dropout=0.1):
         super(DynamicSpatialGNN, self).__init__()
         self.d_model = d_model
         self.num_nodes = num_nodes
         
-        # 线性变换 W (来自 GCN [cite: 325, 348])
         self.Theta = nn.Linear(d_model, d_model, bias=False)
         
-        # 注册一个全1的"静态邻接矩阵" A
-        # 这是为了严格遵循论文 (A ⊙ S_t) 的逻辑 
-        # self.register_buffer('static_adj', torch.ones(num_nodes, num_nodes))
+        # [新] 规则融合层: 将 4 个语义通道融合为 1 个强度值
+        # 4 -> 1 (Head-on, Starboard, Port, Overtaking)
+        self.rule_fusion = nn.Linear(4, 1, bias=False)
         
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, x, entity_padding_mask=None, A_social_t=None):
+    def forward(self, x, A_social_t, entity_padding_mask=None):
         """
         输入:
-        - x: (B, N, T, D)
-        - entity_padding_mask: (B, N) [True=无效]
+        - x: [B, N, T, D]
+        - A_social_t: [B*T, N, N, 4] (4通道的语义图)
         """
         B, N, T, D = x.shape
         
-        # GNN/空间注意力 是在每个时间步 T 上独立计算的
-        # (B, N, T, D) -> (B, T, N, D) -> (B*T, N, D)
         x_permuted = x.permute(0, 2, 1, 3).contiguous()
         Z = x_permuted.view(B*T, N, D)
         
-        # 1. 计算 S_t: 动态注意力矩阵 
-        # (B*T, N, D) @ (B*T, D, N) -> (B*T, N, N)
-        S_t = torch.matmul(Z, Z.transpose(1, 2)) / math.sqrt(D) 
+        # 1. 计算 S_t (注意力图) (不变)
+        S_t = torch.matmul(Z, Z.transpose(1, 2)) / math.sqrt(D)
         
-        # 2. 应用实体掩码 ("幽灵船")
+        # 2. 实体掩码 (不变)
         if entity_padding_mask is not None:
-            # (B, N) -> (B, 1, N) -> (B*T, N)
             mask = entity_padding_mask.unsqueeze(1).repeat(1, T, 1)
             mask = mask.view(B*T, N)
-            
-            # (B*T, N) -> (B*T, N, 1) 和 (B*T, 1, N)
-            # 屏蔽 S_t 矩阵中所有 "幽灵船" 相关的行和列
             mask_row = mask.unsqueeze(2)
             mask_col = mask.unsqueeze(1)
             S_t = S_t.masked_fill(mask_row, -1e9)
@@ -235,23 +230,27 @@ class DynamicSpatialGNN(nn.Module):
             
         S_t_softmax = F.softmax(S_t, dim=-1) # (B*T, N, N)
         
-        # 3. 计算 GCN
-        # A ⊙ S_t 
-        # (N, N) ⊙ (B*T, N, N)
-        #  关键又该，引入 社会力矩阵
-        adj_dynamic = A_social_t.mul(S_t_softmax) 
+        # 3. [关键修改] 融合语义图
+        #    A_semantic_t: [B*T, N, N, 4]
+        #    Fusion: [B*T, N, N, 4] -> [B*T, N, N, 1]
+        A_fused = self.rule_fusion(A_social_t) 
         
-        # (A ⊙ S_t) * Z_t 
-        # (B*T, N, N) @ (B*T, N, D) -> (B*T, N, D)
+        #    移除最后一个维度 -> [B*T, N, N]
+        A_fused = A_fused.squeeze(-1)
+        
+        #    (可选) 使用 ReLU 确保影响力非负，或者允许负值表示 "排斥/忽略"
+        #    这里直接用线性输出，给予模型最大自由度
+        #    A_fused = F.relu(A_fused) 
+        
+        # 4. 结合 物理规则(A) 和 注意力(S)
+        #    adj_dynamic = A_fused ⊙ S_t
+        adj_dynamic = A_fused.mul(S_t_softmax) 
+        
+        # 5. GCN 计算 (不变)
         spatial_features = torch.matmul(adj_dynamic, Z)
-        
-        # (A ⊙ S_t) * Z_t * W 
-        # (B*T, N, D) -> (B*T, N, D)
         output_features = F.relu(self.Theta(spatial_features))
         output_features = self.dropout(output_features)
         
-        # 4. 恢复形状
-        # (B*T, N, D) -> (B, T, N, D) -> (B, N, T, D)
         return output_features.view(B, T, N, D).permute(0, 2, 1, 3)
 
 # ----------------------------------------------------------------------
@@ -312,7 +311,7 @@ class EncoderLayer(nn.Module):
         # x: (B, N, T, D)
         # 1. 时间注意力 [cite: 276]
         B, N, T, D = x.shape
-        A_social_t = A_social_t.reshape(B*T, N, N)
+        A_social_t = A_social_t.reshape(B*T, N, N, 4)
         x = self.sublayer_temporal(x, lambda x: self.temporal_attn(
             x, x, x, 
             key_padding_mask=temporal_mask
@@ -346,8 +345,8 @@ class DecoderLayer(nn.Module):
         B, N, L, D = x.shape
 
         A_social_t_expanded = A_social_t.unsqueeze(1)
-        A_social_t_repeated = A_social_t_expanded.repeat(1, L, 1, 1)
-        A_social_t_for_GNN = A_social_t_repeated.reshape(B * L, N, N)
+        A_social_t_repeated = A_social_t_expanded.repeat(1, L, 1, 1, 1)
+        A_social_t_for_GNN = A_social_t_repeated.reshape(B * L, N, N, 4)
 
         # 1. 时间自注意力 (Causal) [cite: 358]
         x = self.sublayer_self_attn(x, lambda x: self.self_attn(
@@ -461,7 +460,9 @@ class Model(nn.Module):
             x_static: (被忽略, 但保留以兼容 API)
         """
         device = x_enc.device
-        analyze_sparsity(A_social_t, name="A_social_t Input")
+        
+        analyze_sparsity(A_social_t, "A_social_t")
+
         # 1. 准备 掩码 和 Encoder 输入
         mask_x_permuted = mask_x.permute(0, 2, 1) 
         mask_y_permuted = mask_y.permute(0, 2, 1) 

@@ -54,7 +54,10 @@ class ShipTrajectoryDataset(Dataset):
         self.scale = scale
         self.scale_type = scale_type
         self.predict_position_only = predict_position_only
-        self.social_sigma = 1.0  # 社交图中的速度差异标准差参数
+        self.social_sigma = 1.0
+        # [新] 避碰规则参数 (TCPA/DCPA 阈值)
+        self.tcpa_threshold = 300.0 # 例如 300秒 (5分钟)
+        self.dcpa_threshold = 1000.0 # 例如 1000米
         
         # 序列长度
         if size is None:
@@ -281,20 +284,18 @@ class ShipTrajectoryDataset(Dataset):
         global_id = self.global_ids[index]  # [N]
 
         # 计算 social matrix 
-        A_social_enc = self._build_social_graph(seq_x)  # [T_in, N, N]
+        # A_social = self._build_social_graph(seq_x, mask=seq_x_mask)  # [T_in, N, N]
         # A_social_dec = self._build_social_graph(seq_y)
 
+        # 计算 "语义" 社会力矩阵 社会影响力 + COLREGs 规则
+        A_social = self._build_social_graph(seq_x)
         
-        # 如果只预测经纬度，可以在这里标记
-        # 但为了保持数据格式一致，我们仍然返回完整的4个特征
-        # 在计算损失时再决定使用哪些特征
-        
-        return seq_x, seq_y, seq_x_mask, seq_y_mask, ship_count, global_id, A_social_enc
+        return seq_x, seq_y, seq_x_mask, seq_y_mask, ship_count, global_id, A_social
     
     def __len__(self):
         return len(self.data_x)
 
-    def _build_social_graph(self, x_data):
+    def _build_social_graph(self, x_data, mask=None):
         """
         构建社交图（基于船舶之间的距离）
         这里可以实现基于距离的邻接矩阵构建
@@ -348,12 +349,160 @@ class ShipTrajectoryDataset(Dataset):
         # c, .构建 A_social
         A_social = vel_term * dist_term
 
+        # 处理幽灵船的无效交互
+        if mask is not None:
+            if mask.dtype != bool:
+                mask = mask.astype(bool)
+            
+            mask_i = np.expand_dims(mask, axis=2)  # [T, N, 1]  代表船 i
+            mask_j = np.expand_dims(mask, axis=1)  # [T, 1, N]  代表船 j
+            combined_mask = (mask_i & mask_j)  # [T, N, N]  当且仅当 t 时刻的船 i 和船 j *都* 是有效的
+            A_social = A_social * combined_mask
+
         # d. 处理对角线(i=j)
         diag_idx = np.arange(N)
         A_social[:, diag_idx, diag_idx] = 0.0
 
         return A_social # [T_seq, N, N]
 
+    def _build_semantic_social_matrix(self, x_data, mask):
+        """
+        构建 "语义" 社会力矩阵 (基于 COLREGs 规则)
+        返回形状: [T, N, N, 4]
+        通道: 0=Head-on, 1=Starboard_Cross, 2=Port_Cross, 3=Overtaking
+        """
+        T, N, D = x_data.shape
+        
+        # 1. 反归一化 (必须在物理空间计算几何关系)
+        #    假设前4维是 [lat, lon, speed, course]
+        x_phys = x_data * self.scaler_params['mean'][:D] + self.scaler_params['std'][:D]
+        
+        # 提取物理量
+        # 注意: 经纬度直接算欧氏距离在小范围是近似，严谨应投影。
+        # 这里为了效率，假设 lat/lon 也就是平面坐标 (或者数据已经是投影后的 x,y)
+        pos_phys = x_phys[..., :2]      # [T, N, 2] (x, y)
+        speed_phys = x_phys[..., 2]     # [T, N]
+        course_phys = x_phys[..., 3]    # [T, N] (度)
+
+        # 2. 计算速度向量 (vx, vy)
+        #    假设 Course 是以北为0，顺时针 (0~360)
+        #    转为数学弧度: math_angle = 90 - course
+        course_rad = np.deg2rad(90 - course_phys) 
+        vx = speed_phys * np.cos(course_rad)
+        vy = speed_phys * np.sin(course_rad)
+        vel_phys = np.stack([vx, vy], axis=-1) # [T, N, 2]
+
+        # 3. 准备广播维度
+        # i: 本船, j: 他船
+        pos_i = np.expand_dims(pos_phys, axis=2)   # [T, N, 1, 2]
+        pos_j = np.expand_dims(pos_phys, axis=1)   # [T, 1, N, 2]
+        vel_i = np.expand_dims(vel_phys, axis=2)   # [T, N, 1, 2]
+        vel_j = np.expand_dims(vel_phys, axis=1)   # [T, 1, N, 2]
+        course_i = np.expand_dims(course_phys, axis=2) # [T, N, 1]
+
+        # 4. 计算相对量
+        # 相对位置 (j 相对于 i)
+        delta_p = pos_j - pos_i # [T, N, N, 2] (dx, dy)
+        dist = np.linalg.norm(delta_p, axis=-1) # [T, N, N]
+        
+        # 相对速度
+        delta_v = vel_j - vel_i # [T, N, N, 2] (dvx, dvy)
+        rel_speed_sq = np.sum(np.square(delta_v), axis=-1) # |dv|^2
+        
+        # 5. 计算 TCPA (Time to Closest Point of Approach)
+        #    TCPA = - (dp . dv) / |dv|^2
+        #    如果 |dv|~0, TCPA 无意义 (设为大值)
+        dot_p_v = np.sum(delta_p * delta_v, axis=-1)
+        tcpa = -dot_p_v / (rel_speed_sq + 1e-9)
+        
+        # 6. 计算 DCPA (Distance at CPA)
+        #    Pos_cpa = Pos_rel + Vel_rel * TCPA
+        p_cpa = delta_p + delta_v * np.expand_dims(tcpa, axis=-1)
+        dcpa = np.linalg.norm(p_cpa, axis=-1)
+
+        # 7. 计算相对方位角 (Bearing) beta_ij
+        #    beta = atan2(dy, dx) - course_i
+        #    atan2 返回 (-pi, pi) 数学角 (从东逆时针)
+        #    我们需要把 course_i 也转成数学角吗？是的。
+        #    或者更简单：直接算 "视线角" 和 "船头向" 的差
+        
+        # 向量角度 (数学系, 逆时针)
+        angle_vec = np.rad2deg(np.arctan2(delta_p[..., 1], delta_p[..., 0]))
+        # 船首向 (航海系 -> 数学系)
+        heading_math = 90 - course_i
+        
+        # 相对方位 (角度差)
+        beta = angle_vec - heading_math
+        # 归一化到 [-180, 180]
+        beta = (beta + 180) % 360 - 180
+        
+        # 8. 定义相遇类型掩码 (Semantic Masks)
+        #    规则参考自您的图片
+        
+        # A. 基础过滤器: 有碰撞风险的 (TCPA > 0 且 DCPA < D0)
+        # risk_mask = (tcpa > 0) & (tcpa < self.tcpa_threshold) & (dcpa < self.dcpa_threshold)
+        
+        # B. 语义分类 (根据 beta)
+        # 1. Head-on (头碰): |beta| < 15
+        mask_head_on = (np.abs(beta) < 15)
+        
+        # 2. Starboard Crossing (右舷交叉): beta in (15, 112.5)
+        #    在右舷意味着他船在我的右边，我有让路义务 (最重要)
+        #    注意: atan2/坐标系方向要对。假设数学系下减去船首向后，
+        #    负角度是在右边 (顺时针)，正角度在左边。
+        #    让我们修正逻辑：beta = Target - Heading. 
+        #    如果 Target 在 Heading 右边 (顺时针)，beta 应该是负的 (例如 -90)。
+        #    按照您的图片: 右舷是 (15, 112.5)。这可能采用了 "右舷为正" 的定义。
+        #    我们暂且严格遵守您提供的图片定义：
+        mask_cross_starboard = (beta > 15) & (beta <= 112.5)
+        
+        # 3. Port Crossing (左舷交叉): beta in (-112.5, -15)
+        mask_cross_port = (beta >= -112.5) & (beta < -15)
+        
+        # 4. Overtaking (追越): |beta| > 112.5
+        #    并且本船速度更快 (image: "且本船更快")
+        #    speed_phys [T, N] -> speed_i [T, N, 1], speed_j [T, 1, N]
+        # speed_i = np.expand_dims(speed_phys, axis=2)
+        # speed_j = np.expand_dims(speed_phys, axis=1)
+        # mask_overtaking = (np.abs(beta) > 112.5) & (speed_i > speed_j)
+        mask_overtaking = (np.abs(beta) > 112.5) 
+        
+        # 9. 构建 4 通道矩阵
+        #    权重可以沿用之前的 "社会力权重" (dist_term * vel_term)
+        #    或者简单用 1.0 / (dist + eps)
+        
+        # 计算基础权重 (社会力公式)
+        vel_term = np.exp(-rel_speed_sq / (2 * self.social_sigma**2))
+        dist_term = 1.0 / (dist + 1e-9)
+        base_weight = dist_term * vel_term
+        
+        # 应用风险过滤
+        # base_weight = base_weight * risk_mask.astype(float)
+        
+        # 初始化 4 通道 [T, N, N, 4]
+        A_semantic = np.zeros((T, N, N, 4), dtype=np.float32)
+        
+        # 填入通道
+        A_semantic[..., 0] = base_weight * mask_head_on
+        A_semantic[..., 1] = base_weight * mask_cross_starboard
+        A_semantic[..., 2] = base_weight * mask_cross_port
+        A_semantic[..., 3] = base_weight * mask_overtaking
+        
+        # 10. 处理 "幽灵船" 掩码 (必须做!)
+        # if mask is not None:
+        #     if mask.dtype != bool: mask = mask.astype(bool)
+        #     # [T, N, 1, 1] & [T, 1, N, 1]
+        #     mask_i = mask[:, :, None, None]
+        #     mask_j = mask[:, None, :, None]
+        #     combined_mask = mask_i & mask_j # [T, N, N, 1]
+        #     A_semantic = A_semantic * combined_mask
+        # 掩码幽灵船，会导致矩阵过于稀疏，效果不好，暂时不做。
+        
+        # 11. 对角线清零
+        diag_idx = np.arange(N)
+        A_semantic[:, diag_idx, diag_idx, :] = 0.0
+        
+        return A_semantic
 
 
 

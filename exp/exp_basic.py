@@ -2,7 +2,7 @@ import os
 import torch
 # from models import Transformer_V1_0, Transformer_V1_1
 
-from models import  V1_0_Transformer, V1_1_Transformer, V2_0_ASTGNN, V2_1_ASTGNN, V2_2_ASTGNN, V2_2_1_ASTGNN
+from models import  V1_0_Transformer, V1_1_Transformer, V2_0_ASTGNN, V2_1_ASTGNN, V2_2_ASTGNN, V2_2_1_ASTGNN, V2_2_2_ASTGNN
 
 class Exp_Basic(object):
     def __init__(self, args):
@@ -14,6 +14,7 @@ class Exp_Basic(object):
             'V2_1_ASTGNN': V2_1_ASTGNN,
             'V2_2_ASTGNN': V2_2_ASTGNN,
             'V2_2_1_ASTGNN': V2_2_1_ASTGNN,
+            'V2_2_2_ASTGNN': V2_2_2_ASTGNN,
         }
        
 
