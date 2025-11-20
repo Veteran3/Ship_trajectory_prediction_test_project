@@ -53,8 +53,10 @@ def get_args():
 
 ### 关键改动:
 
-社会影响力 -> 社交关系图
-添加 TCPA/DCPA 避碰规则
+融合两个图矩阵：
+1. 社会影响力矩阵 (基于距离和速度计算)，稀疏度6%
+2. 语义社会影响力矩阵 (基于 COLREGs 规则)，稀疏度80%
+
 """
 
     # ==================== 基本配置 ====================
@@ -64,7 +66,7 @@ def get_args():
                         help='status: 1 for training, 0 for testing')
     parser.add_argument('--model_id', type=str, default='ship_traj',
                         help='model id')
-    parser.add_argument('--model', type=str, default='V2_2_2_ASTGNN',
+    parser.add_argument('--model', type=str, default='V2_2_3_ASTGNN',
                         help='model name')
     
     # ==================== 数据配置 ====================
@@ -250,6 +252,9 @@ def main():
     # 写入文件 (使用 utf-8 编码来支持中文)
     
     try:
+        if not os.path.exists(setting):
+            os.makedirs(setting, exist_ok=True)
+            is_newly_created = True
         desc_path = os.path.join(setting, 'description.md')
         try:
             with open(desc_path, 'w', encoding='utf-8') as f:
@@ -259,14 +264,6 @@ def main():
             print(f"警告: 保存实验描述失败 - {e}")
             print(f'\nExperiment Setting: {setting}\n')
         
-
-    
-        if not os.path.exists(setting):
-            os.makedirs(setting, exist_ok=True)
-            is_newly_created = True
-
-        
-
         log_file_path = os.path.join(setting, 'run_log.txt')
         original_stdout = sys.stdout
         sys.stdout = Logger(log_file_path)

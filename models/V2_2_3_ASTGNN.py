@@ -7,17 +7,15 @@ import numpy as np
 from utils.get_loss_function import get_loss_function
 
 """
-针对 V2.2.1 版本 ASTGNN 的改进版
+针对 V2.2.2 版本 ASTGNN 的改进版
 
-社会影响力矩阵，变成 "语义" 社会力矩阵， 结合TCPA/DCPA 避碰规则
-对应 DataLoader 中的 _build_semantic_social_matrix 方法
 
-具体修改：
-这是一个非常关键的架构升级。
+融合两个图矩阵：
+1. 社会影响力矩阵 (基于距离和速度计算)，稀疏度6%
+2. 语义影响力矩阵 (基于语义信息，如头碰、右舷交叉等)，稀疏度80%
 
-为了让模型能够处理 DataLoader 传来的 4 通道 语义矩阵 [T, N, N, 4]（包含头碰、右舷交叉等规则信息），我们需要修改 DynamicSpatialGNN，让它能够学习如何融合这 4 种不同的规则。
-
-我们不需要 4 个独立的 GCN（那样太重了）。最好的方法是引入一个可学习的投影层，让模型自己去权衡这 4 种规则的重要性（例如，自动学会“右舷交叉”的权重应该比“左舷交叉”更高）。
+融合方法：
+- 通过一个可学习的线性层，将 5 通道的语义矩阵融合为 1 通道
 
 
 """
@@ -198,10 +196,11 @@ class DynamicSpatialGNN(nn.Module):
         self.num_nodes = num_nodes
         
         self.Theta = nn.Linear(d_model, d_model, bias=False)
+        self.fusion = nn.Linear(5, 1, bias=False)
         
         # [新] 规则融合层: 将 4 个语义通道融合为 1 个强度值
         # 4 -> 1 (Head-on, Starboard, Port, Overtaking)
-        self.rule_fusion = nn.Linear(4, 1, bias=False)
+        # self.rule_fusion = nn.Linear(4, 1, bias=False)
         
         self.dropout = nn.Dropout(p=dropout)
 
@@ -231,9 +230,9 @@ class DynamicSpatialGNN(nn.Module):
         S_t_softmax = F.softmax(S_t, dim=-1) # (B*T, N, N)
         
         # 3. [关键修改] 融合语义图
-        #    A_semantic_t: [B*T, N, N, 4]
-        #    Fusion: [B*T, N, N, 4] -> [B*T, N, N, 1]
-        A_fused = self.rule_fusion(A_social_t) 
+        #    A_semantic_t: [B*T, N, N, 5]
+        #    Fusion: [B*T, N, N, 5] -> [B*T, N, N, 1]
+        A_fused = self.fusion(A_social_t) 
         
         #    移除最后一个维度 -> [B*T, N, N]
         A_fused = A_fused.squeeze(-1)
@@ -311,7 +310,8 @@ class EncoderLayer(nn.Module):
         # x: (B, N, T, D)
         # 1. 时间注意力 [cite: 276]
         B, N, T, D = x.shape
-        A_social_t = A_social_t.reshape(B*T, N, N, 4)
+        C = A_social_t.shape[-1]
+        A_social_t = A_social_t.reshape(B*T, N, N, C)
         x = self.sublayer_temporal(x, lambda x: self.temporal_attn(
             x, x, x, 
             key_padding_mask=temporal_mask
@@ -343,10 +343,10 @@ class DecoderLayer(nn.Module):
         # x: (B, N, T_out, D)
         # memory: (B, N, T_in, D)
         B, N, L, D = x.shape
-
+        C = A_social_t.shape[-1]
         A_social_t_expanded = A_social_t.unsqueeze(1)
         A_social_t_repeated = A_social_t_expanded.repeat(1, L, 1, 1, 1)
-        A_social_t_for_GNN = A_social_t_repeated.reshape(B * L, N, N, 4)
+        A_social_t_for_GNN = A_social_t_repeated.reshape(B * L, N, N, C)
 
         # 1. 时间自注意力 (Causal) [cite: 358]
         x = self.sublayer_self_attn(x, lambda x: self.self_attn(

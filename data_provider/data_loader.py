@@ -288,7 +288,7 @@ class ShipTrajectoryDataset(Dataset):
         # A_social_dec = self._build_social_graph(seq_y)
 
         # 计算 "语义" 社会力矩阵 社会影响力 + COLREGs 规则
-        A_social = self._build_social_graph(seq_x)
+        A_social = self._build_semantic_social_fusion_matrix(seq_x)
         
         return seq_x, seq_y, seq_x_mask, seq_y_mask, ship_count, global_id, A_social
     
@@ -365,7 +365,7 @@ class ShipTrajectoryDataset(Dataset):
 
         return A_social # [T_seq, N, N]
 
-    def _build_semantic_social_matrix(self, x_data, mask):
+    def _build_semantic_social_matrix(self, x_data, mask=None):
         """
         构建 "语义" 社会力矩阵 (基于 COLREGs 规则)
         返回形状: [T, N, N, 4]
@@ -504,6 +504,140 @@ class ShipTrajectoryDataset(Dataset):
         
         return A_semantic
 
+    def _build_semantic_social_fusion_matrix(self, x_data, mask=None):
+        """
+        构建 "语义" 社会力矩阵 (基于 COLREGs 规则)
+        [完整版 - V5.3] 5通道策略: 背景层(0) + 语义层(1-4)
+        
+        Args:
+            x_data: [T, N, D]
+            mask: [T, N]
+            
+        Returns:
+            np.ndarray: [T, N, N, 5]
+            通道 0: Background (Social Force, Unmasked)
+            通道 1: Head-on (Masked)
+            通道 2: Starboard Crossing (Masked)
+            通道 3: Port Crossing (Masked)
+            通道 4: Overtaking (Masked)
+        """
+        T, N, D = x_data.shape
+        
+        # 1. 反归一化 (必须在物理空间计算几何关系)
+        #    假设前4维是 [lat, lon, speed, course]
+        x_phys = x_data * self.scaler_params['mean'][:D] + self.scaler_params['std'][:D]
+        
+        # 提取物理量
+        pos_phys = x_phys[..., :2]      # [T, N, 2] (x, y)
+        speed_phys = x_phys[..., 2]     # [T, N]
+        course_phys = x_phys[..., 3]    # [T, N] (度)
+
+        # 2. 计算速度向量 (vx, vy)
+        #    假设 Course 是以北为0，顺时针 (0~360)
+        #    转为数学弧度: math_angle = 90 - course
+        course_rad = np.deg2rad(90 - course_phys) 
+        vx = speed_phys * np.cos(course_rad)
+        vy = speed_phys * np.sin(course_rad)
+        vel_phys = np.stack([vx, vy], axis=-1) # [T, N, 2]
+
+        # 3. 准备广播维度
+        # i: 本船, j: 他船
+        pos_i = np.expand_dims(pos_phys, axis=2)   # [T, N, 1, 2]
+        pos_j = np.expand_dims(pos_phys, axis=1)   # [T, 1, N, 2]
+        vel_i = np.expand_dims(vel_phys, axis=2)   # [T, N, 1, 2]
+        vel_j = np.expand_dims(vel_phys, axis=1)   # [T, 1, N, 2]
+        course_i = np.expand_dims(course_phys, axis=2) # [T, N, 1] (这里保持 3D)
+
+        # 4. 计算相对量
+        # 相对位置 (j 相对于 i)
+        delta_p = pos_j - pos_i # [T, N, N, 2] (dx, dy)
+        dist = np.linalg.norm(delta_p, axis=-1) # [T, N, N]
+        
+        # 相对速度
+        delta_v = vel_j - vel_i # [T, N, N, 2] (dvx, dvy)
+        rel_speed_sq = np.sum(np.square(delta_v), axis=-1) # |dv|^2
+        
+        # 5. 计算相对方位角 (Bearing) beta_ij
+        
+        # 向量角度 (数学系, 逆时针)
+        # delta_p: [T, N, N, 2] -> angle_vec: [T, N, N]
+        angle_vec = np.rad2deg(np.arctan2(delta_p[..., 1], delta_p[..., 0]))
+        
+        # 船首向 (航海系 -> 数学系)
+        # course_i: [T, N, 1] -> heading_math: [T, N, 1]
+        heading_math = 90 - course_i
+        
+        # 相对方位 (角度差)
+        # [修正方向]: 正数=右舷 (Starboard), 负数=左舷 (Port)
+        # 航向(90) - 目标方位(0) = +90 (正右方)
+        beta = heading_math - angle_vec 
+        
+        # 归一化到 [-180, 180]
+        beta = (beta + 180) % 360 - 180
+        
+        # 6. 定义相遇类型掩码 (Semantic Masks)
+        
+        # A. Head-on (头碰): [-15, 15]
+        mask_head_on = (np.abs(beta) <= 15)
+        
+        # B. Starboard Crossing (右舷交叉): (15, 112.5]
+        #    正数代表右舷
+        mask_cross_starboard = (beta > 15) & (beta <= 112.5)
+        
+        # C. Port Crossing (左舷交叉): [-112.5, -15)
+        #    负数代表左舷
+        mask_cross_port = (beta >= -112.5) & (beta < -15)
+        
+        # D. Overtaking (追越/船尾): 绝对值 > 112.5
+        mask_overtaking = (np.abs(beta) > 112.5)
+
+        # 7. 计算基础权重 (社会力公式)
+        #    权重对于所有通道都是通用的
+        vel_term = np.exp(-rel_speed_sq / (2 * self.social_sigma**2))
+        dist_term = 1.0 / (dist + 1e-9)
+        base_weight = dist_term * vel_term
+
+        # ==========================================
+        # 8. 构建 5 通道矩阵 (核心逻辑)
+        # ==========================================
+        
+        # --- Channel 0: 背景锚点层 (不带掩码) ---
+        # 这一层保留所有交互 (包括与幽灵船的)，提供全局位置感
+        A_anchor = base_weight.copy()
+        A_anchor = np.expand_dims(A_anchor, axis=-1) # [T, N, N, 1]
+        
+        # --- Channel 1-4: 纯净语义层 (带掩码) ---
+        # 这一层只保留真实船之间的规则交互
+        A_rules = np.zeros((T, N, N, 4), dtype=np.float32)
+        
+        A_rules[..., 0] = base_weight * mask_head_on
+        A_rules[..., 1] = base_weight * mask_cross_starboard
+        A_rules[..., 2] = base_weight * mask_cross_port
+        A_rules[..., 3] = base_weight * mask_overtaking
+        
+        # [关键] 对规则层应用掩码 (清零幽灵船)
+        if mask is not None:
+            if mask.dtype != bool: mask = mask.astype(bool)
+            # [T, N, 1, 1] & [T, 1, N, 1] -> [T, N, N, 1]
+            mask_i = mask[:, :, None, None]
+            mask_j = mask[:, None, :, None]
+            combined_mask = mask_i & mask_j 
+            
+            # 只 mask 规则层
+            A_rules = A_rules * combined_mask
+
+        # --- 拼接 -> 5 Channels ---
+        # [T, N, N, 1] + [T, N, N, 4] -> [T, N, N, 5]
+        A_final = np.concatenate([A_anchor, A_rules], axis=-1)
+        A_final = A_final.astype(np.float32)
+        # 9. 对角线清零 (对所有通道)
+        #    船 i 对自己的力永远为 0
+        diag_idx = np.arange(N)
+        A_final[:, diag_idx, diag_idx, :] = 0.0
+        
+        return A_final
+        
+        
 
 
 
