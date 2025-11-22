@@ -7,16 +7,15 @@ import numpy as np
 from utils.get_loss_function import get_loss_function
 
 """
-针对 V2.2.2 版本 ASTGNN 的改进版
+针对 V2.3.0 版本 ASTGNN 的改进版
 
+版本优化：
+Edge-GNN。
+与DataLoader中的_edge_features函数配合使用，
 
-融合两个图矩阵：
-1. 社会影响力矩阵 (基于距离和速度计算)，稀疏度6%
-2. 语义影响力矩阵 (基于语义信息，如头碰、右舷交叉等)，稀疏度80%
-
-融合方法：
-- 通过一个可学习的线性层，将 5 通道的语义矩阵融合为 1 通道
-
+edge-GNN融合两个矩阵：
+edge-features: 边特征矩阵，大小为 [num_edges, num_features]
+66.7%稀疏度的先验矩阵
 
 """
 
@@ -183,74 +182,171 @@ class TrendAwareAttention(nn.Module):
 # ----------------------------------------------------------------------
 # 模块 3: 动态空间 GNN (来自 ASTGNN [cite: 320, 332])
 # ----------------------------------------------------------------------
-# [在 ShipASTGNN_Model 文件中]
+
 
 class DynamicSpatialGNN(nn.Module):
     """
-    ASTGNN 的核心：动态 GCN
-    [已修改] 接收 4 通道的语义社会力矩阵，并通过可学习的层进行融合。
+    Edge-conditioned Dynamic Spatial GNN
+    同时使用：
+      - edge_features: 交互物理特征 (例如 1/d, v_rel, cosθ, sinθ ...)
+      - A_prior: 先验图 (比如你 66.7% 稀疏的融合矩阵)
+
+    输入:
+        x:             [B, N, T, D]         节点特征 (船舶状态序列)
+        edge_features: [B*T, N, N, edge_dim]
+        A_prior:       [B*T, N, N] 或 [B, T, N, N]    (可选)
+        entity_padding_mask:
+                       [B, N] 或 [B, T, N] (True 表示该船/该时刻是 padding/不存在)
+
+    输出:
+        out:           [B, N, T, D]
     """
-    def __init__(self, d_model, num_nodes, dropout=0.1):
-        super(DynamicSpatialGNN, self).__init__()
+
+    def __init__(
+        self,
+        d_model: int,
+        num_nodes: int,
+        edge_dim: int = 4,
+        hidden_edge: int = 32,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
         self.d_model = d_model
         self.num_nodes = num_nodes
-        
-        self.Theta = nn.Linear(d_model, d_model, bias=False)
-        self.fusion = nn.Linear(5, 1, bias=False)
-        
-        # [新] 规则融合层: 将 4 个语义通道融合为 1 个强度值
-        # 4 -> 1 (Head-on, Starboard, Port, Overtaking)
-        # self.rule_fusion = nn.Linear(4, 1, bias=False)
-        
-        self.dropout = nn.Dropout(p=dropout)
+        self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, A_social_t, entity_padding_mask=None):
+        d_attn = d_model  # 注意力空间维度，简单起见 = d_model
+
+        self.A_prior_fusion = nn.Linear(5, 1, bias=False)
+
+        # 节点特征映射到注意力空间 (Q, K, V)
+        self.W_q = nn.Linear(d_model, d_attn, bias=False)
+        self.W_k = nn.Linear(d_model, d_attn, bias=False)
+        self.W_v = nn.Linear(d_model, d_attn, bias=False)
+
+        # 边特征 MLP: 输入 [q_i, k_j, edge_ij]，输出一个标量 logit_ij
+        self.edge_mlp = nn.Sequential(
+            nn.Linear(2 * d_attn + edge_dim, hidden_edge),
+            nn.ReLU(),
+            nn.Linear(hidden_edge, 1),  # 不加 Sigmoid，直接当 logits
+        )
+
+        # 输出投影回 d_model
+        self.Theta = nn.Linear(d_attn, d_model, bias=False)
+        self.norm = nn.LayerNorm(d_model)
+
+        # 可学习权重：控制物理项 & 先验项在 logits 中的影响力
+        self.phys_weight = nn.Parameter(torch.tensor(1.0))
+        self.prior_weight = nn.Parameter(torch.tensor(1.0))
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        edge_features: torch.Tensor,
+        A_prior: torch.Tensor = None,
+        entity_padding_mask: torch.Tensor = None,
+    ) -> torch.Tensor:
         """
-        输入:
-        - x: [B, N, T, D]
-        - A_social_t: [B*T, N, N, 4] (4通道的语义图)
+        x:             [B, N, T, D]
+        edge_features: [B*T, N, N, edge_dim]
+        A_prior:       [B*T, N, N] 或 [B, T, N, N] (可选)
+        entity_padding_mask:
+                       [B, N] 或 [B, T, N] (True 表示 padding)
         """
         B, N, T, D = x.shape
-        
-        x_permuted = x.permute(0, 2, 1, 3).contiguous()
-        Z = x_permuted.view(B*T, N, D)
-        
-        # 1. 计算 S_t (注意力图) (不变)
-        S_t = torch.matmul(Z, Z.transpose(1, 2)) / math.sqrt(D)
-        
-        # 2. 实体掩码 (不变)
+
+        # [B, N, T, D] -> [B, T, N, D] -> [B*T, N, D]
+        x_btnd = x.permute(0, 2, 1, 3).contiguous()
+        Z = x_btnd.view(B * T, N, D)  # 当前层节点特征 H
+
+        # 1. 节点映射到注意力空间
+        Q = self.W_q(Z)  # [B*T, N, d_attn]
+        K = self.W_k(Z)  # [B*T, N, d_attn]
+        V = self.W_v(Z)  # [B*T, N, d_attn]
+
+        d_attn = Q.size(-1)
+
+        # 2. 基于节点特征的内容打分 (QK^T)
+        content_logits = torch.matmul(Q, K.transpose(1, 2)) / math.sqrt(d_attn)
+        # [B*T, N, N]
+
+        # 3. 基于 (h_i, h_j, edge_ij) 的物理打分 (edge-conditioned)
+        #    Qi: [B*T, N, 1, d], Kj: [B*T, 1, N, d]
+        Qi = Q.unsqueeze(2).expand(-1, -1, N, -1)  # [B*T, N, N, d_attn]
+        Kj = K.unsqueeze(1).expand(-1, N, -1, -1)  # [B*T, N, N, d_attn]
+
+        # edge_features: [B*T, N, N, edge_dim]
+        edge_input = torch.cat([Qi, Kj, edge_features], dim=-1)
+        # [B*T, N, N, 2*d_attn + edge_dim]
+
+        phys_logits = self.edge_mlp(edge_input).squeeze(-1)  # [B*T, N, N]
+
+        # 4. 合并内容打分和物理打分
+        logits = content_logits + self.phys_weight * phys_logits  # [B*T, N, N]
+
+        # 5. 如果有先验邻接 A_prior，把它当成 log-prior 加进去
+        if A_prior is not None:
+            A_prior = self.A_prior_fusion(A_prior).squeeze(-1)
+
+            # 支持 [B*T, N, N] 或 [B, T, N, N]
+            if A_prior.dim() == 4:           # [B, T, N, N] -> [B*T, N, N]
+                A_prior = A_prior.contiguous().view(B * T, N, N)
+            # 如果你这边是 5 通道 [B,T,N,N,5]，请在外面先融合成 1 通道再传进来
+            A_prior = torch.nan_to_num(A_prior, nan=0.0, posinf=0.0, neginf=0.0)
+            A_prior = torch.clamp(A_prior, min=0.0)   # 所有负值直接截成 0
+            eps = 1e-6
+            prior_logits = torch.log(A_prior + eps)  # [B*T, N, N]
+            logits = logits + self.prior_weight * prior_logits
+
+        # 6. 实体 padding / 时间存在 mask
         if entity_padding_mask is not None:
-            mask = entity_padding_mask.unsqueeze(1).repeat(1, T, 1)
-            mask = mask.view(B*T, N)
-            mask_row = mask.unsqueeze(2)
-            mask_col = mask.unsqueeze(1)
-            S_t = S_t.masked_fill(mask_row, -1e9)
-            S_t = S_t.masked_fill(mask_col, -1e9)
-            
-        S_t_softmax = F.softmax(S_t, dim=-1) # (B*T, N, N)
-        
-        # 3. [关键修改] 融合语义图
-        #    A_semantic_t: [B*T, N, N, 5]
-        #    Fusion: [B*T, N, N, 5] -> [B*T, N, N, 1]
-        A_fused = self.fusion(A_social_t) 
-        
-        #    移除最后一个维度 -> [B*T, N, N]
-        A_fused = A_fused.squeeze(-1)
-        
-        #    (可选) 使用 ReLU 确保影响力非负，或者允许负值表示 "排斥/忽略"
-        #    这里直接用线性输出，给予模型最大自由度
-        #    A_fused = F.relu(A_fused) 
-        
-        # 4. 结合 物理规则(A) 和 注意力(S)
-        #    adj_dynamic = A_fused ⊙ S_t
-        adj_dynamic = A_fused.mul(S_t_softmax) 
-        
-        # 5. GCN 计算 (不变)
-        spatial_features = torch.matmul(adj_dynamic, Z)
-        output_features = F.relu(self.Theta(spatial_features))
-        output_features = self.dropout(output_features)
-        
-        return output_features.view(B, T, N, D).permute(0, 2, 1, 3)
+            if entity_padding_mask.dim() == 2:
+                # [B, N] -> [B, T, N]
+                mask_bt = entity_padding_mask.unsqueeze(1).expand(B, T, N)
+            else:
+                mask_bt = entity_padding_mask  # [B, T, N]
+
+            mask_bt = mask_bt.contiguous().view(B * T, N)  # [B*T, N]
+
+            mask_row = mask_bt.unsqueeze(2).expand(B * T, N, N)  # i 无效
+            mask_col = mask_bt.unsqueeze(1).expand(B * T, N, N)  # j 无效
+            invalid = mask_row | mask_col
+
+            # 用大负数而不是 -inf，避免 softmax 出 NaN
+            logits = logits.masked_fill(invalid, -1e9)
+
+        # 7. softmax 得到注意力权重 α_ij
+        alpha = F.softmax(logits, dim=-1)  # [B*T, N, N]
+
+        # 8. 消息聚合
+        spatial_features = torch.matmul(alpha, V)  # [B*T, N, d_attn]
+        output_features = self.Theta(spatial_features)  # [B*T, N, D]
+
+        # 9. 残差 + LayerNorm + Dropout
+        output_features = output_features.view(B, T, N, D)
+        Z_reshaped = Z.view(B, T, N, D)
+
+        out = self.norm(Z_reshaped + output_features)  # [B, T, N, D]
+        out = self.dropout(out)
+
+        # 10. 还原回 [B, N, T, D]
+        out = out.permute(0, 2, 1, 3).contiguous()  # [B, N, T, D]
+
+        # 11. 最后把 padding 节点特征清零（可选，但推荐）
+        if entity_padding_mask is not None:
+            if entity_padding_mask.dim() == 2:
+                # [B, N] -> [B, N, 1, 1]
+                mask_bn = entity_padding_mask.unsqueeze(-1).unsqueeze(-1)
+            else:
+                # [B, T, N] -> [B, N, T, 1]
+                mask_bn = entity_padding_mask.permute(0, 2, 1).unsqueeze(-1)
+
+            if mask_bn.dtype != torch.bool:
+                mask_bn = mask_bn.bool()
+
+            out = out.masked_fill(mask_bn, 0.0)
+
+        return out  # [B, N, T, D]
 
 # ----------------------------------------------------------------------
 # 模块 4: 嵌入层 (来自 ASTGNN [cite: 376, 387])
@@ -306,12 +402,14 @@ class EncoderLayer(nn.Module):
         self.sublayer_temporal = SublayerConnection(d_model, dropout)
         self.sublayer_spatial = SublayerConnection(d_model, dropout)
 
-    def forward(self, x, temporal_mask, entity_mask, A_social_t=None):
+    def forward(self, x, temporal_mask, entity_mask, A_social_t=None, edge_features=None):
         # x: (B, N, T, D)
         # 1. 时间注意力 [cite: 276]
         B, N, T, D = x.shape
         C = A_social_t.shape[-1]
+        E = edge_features.shape[-1]
         A_social_t = A_social_t.reshape(B*T, N, N, C)
+        edge_features = edge_features.reshape(B*T, N, N, E)
         x = self.sublayer_temporal(x, lambda x: self.temporal_attn(
             x, x, x, 
             key_padding_mask=temporal_mask
@@ -320,8 +418,9 @@ class EncoderLayer(nn.Module):
         # 2. 空间 GNN [cite: 277]
         x = self.sublayer_spatial(x, lambda x: self.spatial_gnn(
             x, 
-            entity_padding_mask=entity_mask,
-            A_social_t=A_social_t
+            A_prior=A_social_t,
+            edge_features=edge_features,
+            entity_padding_mask=entity_mask
         ))
         return x
 
@@ -339,14 +438,19 @@ class DecoderLayer(nn.Module):
         self.sublayer_spatial_attn = SublayerConnection(d_model, dropout)
         self.sublayer_cross_attn = SublayerConnection(d_model, dropout)
 
-    def forward(self, x, memory, temporal_mask_self, temporal_mask_cross, entity_mask, attn_mask_self, A_social_t=None):
+    def forward(self, x, memory, temporal_mask_self, temporal_mask_cross, entity_mask, attn_mask_self, A_social_t=None, edge_features_t=None):
         # x: (B, N, T_out, D)
         # memory: (B, N, T_in, D)
         B, N, L, D = x.shape
         C = A_social_t.shape[-1]
+        E = edge_features_t.shape[-1]
         A_social_t_expanded = A_social_t.unsqueeze(1)
         A_social_t_repeated = A_social_t_expanded.repeat(1, L, 1, 1, 1)
         A_social_t_for_GNN = A_social_t_repeated.reshape(B * L, N, N, C)
+        
+        edge_features_t_expanded = edge_features_t.unsqueeze(1)
+        edge_features_t_repeated = edge_features_t_expanded.repeat(1, L, 1, 1, 1)
+        edge_features_t_for_GNN = edge_features_t_repeated.reshape(B * L, N, N, E)
 
         # 1. 时间自注意力 (Causal) [cite: 358]
         x = self.sublayer_self_attn(x, lambda x: self.self_attn(
@@ -358,8 +462,9 @@ class DecoderLayer(nn.Module):
         # 2. 空间 GNN [cite: 357]
         x = self.sublayer_spatial_attn(x, lambda x: self.spatial_gnn(
             x, 
-            entity_padding_mask=entity_mask,
-            A_social_t=A_social_t_for_GNN
+            A_prior=A_social_t_for_GNN,
+            edge_features=edge_features_t_for_GNN,
+            entity_padding_mask=entity_mask
         ))
         
         # 3. 时间交叉注意力 [cite: 362]
@@ -381,7 +486,7 @@ class Model(nn.Module):
         
         # ... (num_nodes, in_features, d_model, num_heads 等参数不变) ...
         self.num_nodes = args.num_ships
-        self.in_features = 5
+        self.in_features = 5        # 这个地方应该改成5。COG被划分成了sin/cos两部分
         self.out_features = 2 
         self.d_model = args.d_model
         self.num_heads = args.n_heads
@@ -448,7 +553,7 @@ class Model(nn.Module):
         y_truth_deltas = y_truth_abs - all_previous_positions
         return y_truth_deltas
 
-    def forward(self, x_enc, y_truth_abs, mask_x, mask_y, A_social_t=None):
+    def forward(self, x_enc, y_truth_abs, mask_x, mask_y, A_social_t=None, edge_features=None):
         """
         前向传播 (已升级为 V4 - "固定预定采样" + "稳定反馈")
         
@@ -478,7 +583,7 @@ class Model(nn.Module):
         # [关键] 使用 "可学习的" 节点嵌入
         enc_in = self.node_encoder(enc_in) 
         enc_in = self.pos_encoder(enc_in)  
-        
+
         # 2. Encoder (不变)
         memory = enc_in
         for layer in self.encoder_layers:
@@ -486,7 +591,8 @@ class Model(nn.Module):
                 memory, 
                 temporal_mask=temporal_padding_mask_enc, 
                 entity_mask=entity_padding_mask,
-                A_social_t=A_social_t
+                A_social_t=A_social_t,
+                edge_features=edge_features
             )
         memory = self.encoder_norm(memory)
 
@@ -525,8 +631,9 @@ class Model(nn.Module):
             # 5. 运行 Decoder
 
             A_social_t_last = A_social_t[:, -1, :, :]
+            edge_features_t = edge_features[:, -1, :, :]
             # print('A_social_t_last shape:', A_social_t_last.shape)
-            print('social matrix in decoder shape:', A_social_t_last.shape)
+
             dec_out = dec_in
             for layer in self.decoder_layers:
                 dec_out = layer(
@@ -535,7 +642,8 @@ class Model(nn.Module):
                     temporal_mask_cross=temporal_padding_mask_enc,
                     entity_mask=entity_padding_mask,
                     attn_mask_self=attn_mask_self_step, 
-                    A_social_t=A_social_t_last
+                    A_social_t=A_social_t_last,
+                    edge_features_t=edge_features_t
                 )
             dec_out = self.decoder_norm(dec_out)
             

@@ -1,0 +1,138 @@
+================================================================================
+Ship Trajectory Prediction with Transformer
+================================================================================
+Args in experiment:
+  task_name: ship_trajectory_forecast
+  is_training: 1
+  model_id: ship_traj
+  model: V3_0_0_ASTGNN
+  root_path: ./data/
+  train_data_path: train.npz
+  val_data_path: val.npz
+  test_data_path: test.npz
+  checkpoints: ./checkpoints/
+  seq_len: 8
+  pred_len: 12
+  num_ships: 17
+  num_features: 4
+  scale: 1
+  scale_type: standard
+  predict_position_only: 1
+  in_feature: 5
+  d_model: 64
+  n_heads: 8
+  e_layers: 4
+  d_layers: 4
+  d_ff: 256
+  factor: 5
+  dropout: 0.1
+  activation: gelu
+  output_attention: 0
+  batch_size: 32
+  learning_rate: 0.0001
+  loss: mse
+  train_epochs: 100
+  patience: 10
+  lradj: type1
+  use_gpu: 1
+  gpu_type: cuda
+  gpu: 0
+  use_multi_gpu: 0
+  devices: 0,1,2,3
+  num_workers: 4
+  use_amp: 0
+  seed: 2024
+  des: Exp
+  ANNEAL_START_EPOCH: 1
+  ANNEAL_END_EPOCH: 50
+  PROB_START: 1.0
+  PROB_END: 0.2
+  social_sigma: 1.0
+  tcpa_thresh: 300.0
+  dcpa_thresh: 1000.0
+================================================================================
+实验描述已保存到: experiments/ship_traj_V3_0_0_ASTGNN_sl8_pl12_dm64_nh8_el4_dl4_df256_Exp/run_seed2024_20251122015010/description.md
+Use GPU: cuda:0
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Training Stage
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Loading train data from: ./data/train.npz
+train dataset loaded:
+  X shape: (65852, 8, 17, 4)
+  y shape: (65852, 12, 17, 4)
+  X_mask shape: (65852, 8, 17)
+  y_mask shape: (65852, 12, 17)
+  ship_counts shape: (65852,)
+  global_ids shape: (65852, 17)
+  Number of samples: 65852
+  Average ship count: 5.16
+
+Normalization parameters (standard):
+  Longitude: mean=110.2374, std=0.0585
+  Latitude: mean=20.1747, std=0.0180
+  SOG: mean=10.8425, std=1.7193
+  COG: mean=171.0433, std=95.9676
+mask shape: (65852, 8, 17)
+mask shape: (65852, 12, 17)
+train dataset size: 65852
+Loading val data from: ./data/val.npz
+val dataset loaded:
+  X shape: (9055, 8, 17, 4)
+  y shape: (9055, 12, 17, 4)
+  X_mask shape: (9055, 8, 17)
+  y_mask shape: (9055, 12, 17)
+  ship_counts shape: (9055,)
+  global_ids shape: (9055, 17)
+  Number of samples: 9055
+  Average ship count: 5.16
+
+Loaded normalization parameters from: ./data/scaler_params.npy
+mask shape: (9055, 8, 17)
+mask shape: (9055, 12, 17)
+val dataset size: 9055
+Loading test data from: ./data/test.npz
+test dataset loaded:
+  X shape: (7409, 8, 17, 4)
+  y shape: (7409, 12, 17, 4)
+  X_mask shape: (7409, 8, 17)
+  y_mask shape: (7409, 12, 17)
+  ship_counts shape: (7409,)
+  global_ids shape: (7409, 17)
+  Number of samples: 7409
+  Average ship count: 5.16
+
+Loaded normalization parameters from: ./data/scaler_params.npy
+mask shape: (7409, 8, 17)
+mask shape: (7409, 12, 17)
+test dataset size: 7409
+
+==============================
+检测到程序异常崩溃！开始清理...
+==============================
+Traceback (most recent call last):
+  File "/mnt/stu/ZhangDong/2_PhD_projects/0_0_My_model/main.py", line 278, in main
+    exp.train(setting)
+  File "/mnt/stu/ZhangDong/2_PhD_projects/0_0_My_model/exp/exp_forecasting_V3.py", line 170, in train
+    pred_deltas = self.model(
+  File "/mnt/stu/anaconda3/envs/zd_base/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/mnt/stu/anaconda3/envs/zd_base/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+TypeError: Model.forward() got an unexpected keyword argument 'A_social_t'
+
+正在自动清理失败的运行目录: experiments/ship_traj_V3_0_0_ASTGNN_sl8_pl12_dm64_nh8_el4_dl4_df256_Exp/run_seed2024_20251122015010 ...
+>> 清理完成 (垃圾文件已删除)。
+Traceback (most recent call last):
+  File "/mnt/stu/ZhangDong/2_PhD_projects/0_0_My_model/main.py", line 353, in <module>
+    main()
+  File "/mnt/stu/ZhangDong/2_PhD_projects/0_0_My_model/main.py", line 347, in main
+    raise e
+  File "/mnt/stu/ZhangDong/2_PhD_projects/0_0_My_model/main.py", line 278, in main
+    exp.train(setting)
+  File "/mnt/stu/ZhangDong/2_PhD_projects/0_0_My_model/exp/exp_forecasting_V3.py", line 170, in train
+    pred_deltas = self.model(
+  File "/mnt/stu/anaconda3/envs/zd_base/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/mnt/stu/anaconda3/envs/zd_base/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+TypeError: Model.forward() got an unexpected keyword argument 'A_social_t'

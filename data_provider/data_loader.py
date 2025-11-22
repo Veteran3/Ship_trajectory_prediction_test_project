@@ -110,6 +110,49 @@ class ShipTrajectoryDataset(Dataset):
         if self.scale:
             self.__normalize_data__()
     
+    def _transform_features(self, x, mask):
+        """
+        将原始的 4维特征 [Lat, Lon, SOG, COG] 转换为 5维特征 [Lat, Lon, SOG, Cos, Sin]。
+        
+        Args:
+            raw_data: 归一化后的数据 [L, 4] 或 [L, N, 4]
+            
+        Returns:
+            new_data: 转换后的数据 [L, 5] 或 [L, N, 5]
+        """
+        assert mask is not None, "Mask must be provided"
+        # 分割数据
+        feats_others = x[..., :3]
+        cog_scaled = x[..., 3]
+
+        # 1. 反归一化COG
+        if self.scale_type == 'standard':
+            cog_phys = cog_scaled * self.std[3] + self.mean[3]
+        elif self.scale_type == 'minmax':
+            cog_phys = cog_scaled * (self.max_val[3] - self.min_val[3]) + self.min_val[3]
+        # 2. 计算 Cos 和 Sin 分量
+        cog_rad = np.deg2rad(cog_phys)
+        cog_cos = np.cos(cog_rad)
+        cog_sin = np.sin(cog_rad)
+        # 3. 拼接新特征
+
+        # print('feats_others shape:', feats_others.shape)
+        # print('cog_cos shape:', cog_cos.shape)
+        # print('cog_sin shape:', cog_sin.shape)
+
+        if mask is not None:
+            # 确保 mask 是 bool 类型
+            if mask.dtype != bool: 
+                mask = mask.astype(bool)
+
+        new_feats = np.concatenate([feats_others, cog_cos[..., np.newaxis], cog_sin[..., np.newaxis]], axis=-1)
+        
+        new_feats = new_feats * mask[..., np.newaxis]  # 只保留有效位置的数据
+
+        return new_feats.astype(np.float32)
+
+
+
     def __normalize_data__(self):
         """
         数据归一化
@@ -153,7 +196,7 @@ class ShipTrajectoryDataset(Dataset):
             }
             
             print(f'\nNormalization parameters ({self.scale_type}):')
-            feature_names = ['Longitude', 'Latitude', 'COG', 'SOG']
+            feature_names = ['Longitude', 'Latitude', 'SOG', 'COG']
             for i, name in enumerate(feature_names):
                 if self.scale_type == 'standard':
                     print(f'  {name}: mean={self.mean[i]:.4f}, std={self.std[i]:.4f}')
@@ -289,8 +332,14 @@ class ShipTrajectoryDataset(Dataset):
 
         # 计算 "语义" 社会力矩阵 社会影响力 + COLREGs 规则
         A_social = self._build_semantic_social_fusion_matrix(seq_x)
+        edge_features = self._build_edge_features(seq_x, mask=seq_x_mask)
+
+        seq_x = self._transform_features(seq_x, seq_x_mask)
+        seq_y = self._transform_features(seq_y, seq_y_mask)
         
-        return seq_x, seq_y, seq_x_mask, seq_y_mask, ship_count, global_id, A_social
+
+        return seq_x, seq_y, seq_x_mask, seq_y_mask, ship_count, global_id, A_social, edge_features
+        # return seq_x, seq_y, seq_x_mask, seq_y_mask, ship_count, global_id, A_social
     
     def __len__(self):
         return len(self.data_x)
@@ -529,6 +578,7 @@ class ShipTrajectoryDataset(Dataset):
         
         # 提取物理量
         pos_phys = x_phys[..., :2]      # [T, N, 2] (x, y)
+        
         speed_phys = x_phys[..., 2]     # [T, N]
         course_phys = x_phys[..., 3]    # [T, N] (度)
 
@@ -637,7 +687,64 @@ class ShipTrajectoryDataset(Dataset):
         
         return A_final
         
+    def _build_edge_features(self, x_data, mask=None):
+        """
+        构建原始边特征 (Edge Features) - 配合 Edge-Conditioned GNN 使用
+        返回: [T, N, N, 4] -> (1/d, v_rel, cos, sin)
+        """
+        T, N, D = x_data.shape
         
+        # 1. 反归一化
+        x_phys = x_data * self.scaler_params['mean'][:D] + self.scaler_params['std'][:D]
+        pos_phys = x_phys[..., :2]      
+        speed_phys = x_phys[..., 2]     
+        course_phys = x_phys[..., 3]    
+
+        # 2. 基础物理量准备
+        course_rad = np.deg2rad(90 - course_phys) 
+        vx = speed_phys * np.cos(course_rad)
+        vy = speed_phys * np.sin(course_rad)
+        vel_phys = np.stack([vx, vy], axis=-1)
+
+        pos_i = np.expand_dims(pos_phys, axis=2)   
+        pos_j = np.expand_dims(pos_phys, axis=1)   
+        vel_i = np.expand_dims(vel_phys, axis=2)   
+        vel_j = np.expand_dims(vel_phys, axis=1)   
+        course_i = np.expand_dims(course_phys, axis=2) 
+
+        # 3. 计算 4 大特征
+        
+        # Feature 0: 逆距离 (1/d)
+        delta_p = pos_j - pos_i 
+        dist = np.linalg.norm(delta_p, axis=-1) 
+        inv_dist = 1.0 / (dist + 1.0) # +1.0 保持数值稳定
+        
+        # Feature 1: 相对速度
+        delta_v = vel_j - vel_i 
+        rel_speed = np.linalg.norm(delta_v, axis=-1) 
+        rel_speed = np.log1p(rel_speed)
+        # Feature 2 & 3: 相对方位的 Cos 和 Sin
+        angle_vec = np.rad2deg(np.arctan2(delta_p[..., 1], delta_p[..., 0]))
+        heading_math = 90 - course_i
+        # 正数=右舷, 负数=左舷
+        beta_deg = heading_math - angle_vec 
+        beta_rad = np.deg2rad(beta_deg)
+        
+        cos_beta = np.cos(beta_rad)
+        sin_beta = np.sin(beta_rad)
+        
+        # 4. 堆叠 -> [T, N, N, 4]
+        edge_features = np.stack([inv_dist, rel_speed, cos_beta, sin_beta], axis=-1)
+        
+        # 5. 掩码幽灵船 (必须做，否则 MLP 会学到噪声)
+        if mask is not None:
+            if mask.dtype != bool: mask = mask.astype(bool)
+            mask_i = mask[:, :, None, None]
+            mask_j = mask[:, None, :, None]
+            combined_mask = mask_i & mask_j 
+            edge_features = edge_features * combined_mask
+            
+        return edge_features.astype(np.float32)
 
 
 

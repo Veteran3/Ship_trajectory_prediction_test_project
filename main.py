@@ -49,13 +49,8 @@ def get_args():
     
     experiment_desc = """
 ## 实验目的：
-1. 构建多船多船社交关系图，并使用图卷积网络进行预测。
+3.0.0版本第一次实验
 
-### 关键改动:
-
-融合两个图矩阵：
-1. 社会影响力矩阵 (基于距离和速度计算)，稀疏度6%
-2. 语义社会影响力矩阵 (基于 COLREGs 规则)，稀疏度80%
 
 """
 
@@ -66,7 +61,7 @@ def get_args():
                         help='status: 1 for training, 0 for testing')
     parser.add_argument('--model_id', type=str, default='ship_traj',
                         help='model id')
-    parser.add_argument('--model', type=str, default='V2_2_3_ASTGNN',
+    parser.add_argument('--model', type=str, default='V3_0_0_ASTGNN',
                         help='model name')
     
     # ==================== 数据配置 ====================
@@ -99,6 +94,8 @@ def get_args():
                         help='only predict position (lon, lat), ignore COG and SOG')
     
     # ==================== 模型配置 ====================
+    parser.add_argument('--in_feature', type=int, default=5,
+                        help='input feature dimension')
     parser.add_argument('--d_model', type=int, default=64,
                         help='dimension of model')
     parser.add_argument('--n_heads', type=int, default=8,

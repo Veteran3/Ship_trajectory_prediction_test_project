@@ -7,17 +7,13 @@ import numpy as np
 from utils.get_loss_function import get_loss_function
 
 """
-针对 V2.2.2 版本 ASTGNN 的改进版
+针对 V2.2.3 版本 ASTGNN 的改进版
+对于两图融合:
+v2.2.3 版本中, 使用一个线性层直接将5D的特征压缩为1D，作为邻接矩阵输入至模型中。
+这种融合是一种静态的融合，无法根据输入数据动态调整各个语义图的权重。
 
-
-融合两个图矩阵：
-1. 社会影响力矩阵 (基于距离和速度计算)，稀疏度6%
-2. 语义影响力矩阵 (基于语义信息，如头碰、右舷交叉等)，稀疏度80%
-
-融合方法：
-- 通过一个可学习的线性层，将 5 通道的语义矩阵融合为 1 通道
-
-
+本版本优化：
+将原本的线性融合，修改为类似SE-Block的方式作为融合。
 """
 
 # 矩阵稀疏性测试
@@ -196,25 +192,57 @@ class DynamicSpatialGNN(nn.Module):
         self.num_nodes = num_nodes
         
         self.Theta = nn.Linear(d_model, d_model, bias=False)
-        self.fusion = nn.Linear(5, 1, bias=False)
-        
-        # [新] 规则融合层: 将 4 个语义通道融合为 1 个强度值
-        # 4 -> 1 (Head-on, Starboard, Port, Overtaking)
-        # self.rule_fusion = nn.Linear(4, 1, bias=False)
-        
+        # ============================================================
+        # [新] 动态门控网络 (Gating Network)
+        # ============================================================
+        # 这是一个 "Squeeze-and-Excitation" 风格的模块
+        # 输入: 全局上下文向量 [Batch*Time, d_model]
+        # 输出: 5 个通道的动态权重 [Batch*Time, 5]
+        reduction_ratio = 4
+        hidden_dim = max(d_model // reduction_ratio, 16)
+        self.channel_gate = nn.Sequential(
+            nn.Linear(d_model, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 5),
+            nn.Softmax(dim=-1),
+        )
+                
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, x, A_social_t, entity_padding_mask=None):
         """
         输入:
         - x: [B, N, T, D]
-        - A_social_t: [B*T, N, N, 4] (4通道的语义图)
+        - A_social_t: [B*T, N, N, 5] (5通道的语义图)
         """
         B, N, T, D = x.shape
         
         x_permuted = x.permute(0, 2, 1, 3).contiguous()
         Z = x_permuted.view(B*T, N, D)
+
+        # ============================================================
+        # 【核心逻辑】1. 计算动态通道权重（Daynamic Channel Weights）
+        # ============================================================
         
+        # A. 全局上下文汇聚 (Squeeze)
+        #    对 N 个节点取平均，得到当前时刻 "整张图" 的宏观状态
+        #    [B*T, N, D] -> [B*T, D]
+        global_context = Z.mean(dim=1)
+
+        # B. 计算权重 (Excitation)
+        #    根据当前局势，决定看哪个通道
+        #    [B*T, D] -> [B*T, 5]
+        channel_weights = self.channel_gate(global_context) # (B*T, 5)
+
+        # C. 加权融合
+        #     A_social_t: [B*T, N, N, 5]
+        #     weights: [B*T, 1, 1, 5] -> 自动广播
+        weights_expanded = channel_weights.view(B*T, 1, 1, 5)
+
+        # 逐元素相乘并求和： Sum(A_k * w_k) over k=1..5
+        # [B*T, N, N, 5] -> [B*T, N, N]
+        A_fused = torch.sum(A_social_t * weights_expanded, dim=-1) # (B*T, N, N)
+
         # 1. 计算 S_t (注意力图) (不变)
         S_t = torch.matmul(Z, Z.transpose(1, 2)) / math.sqrt(D)
         
@@ -227,15 +255,7 @@ class DynamicSpatialGNN(nn.Module):
             S_t = S_t.masked_fill(mask_row, -1e9)
             S_t = S_t.masked_fill(mask_col, -1e9)
             
-        S_t_softmax = F.softmax(S_t, dim=-1) # (B*T, N, N)
-        
-        # 3. [关键修改] 融合语义图
-        #    A_semantic_t: [B*T, N, N, 5]
-        #    Fusion: [B*T, N, N, 5] -> [B*T, N, N, 1]
-        A_fused = self.fusion(A_social_t) 
-        
-        #    移除最后一个维度 -> [B*T, N, N]
-        A_fused = A_fused.squeeze(-1)
+        S_t_softmax = F.softmax(S_t, dim=-1) # (B*T, N, N) 
         
         #    (可选) 使用 ReLU 确保影响力非负，或者允许负值表示 "排斥/忽略"
         #    这里直接用线性输出，给予模型最大自由度
@@ -381,7 +401,7 @@ class Model(nn.Module):
         
         # ... (num_nodes, in_features, d_model, num_heads 等参数不变) ...
         self.num_nodes = args.num_ships
-        self.in_features = 5
+        self.in_features = args.num_features
         self.out_features = 2 
         self.d_model = args.d_model
         self.num_heads = args.n_heads
@@ -526,7 +546,7 @@ class Model(nn.Module):
 
             A_social_t_last = A_social_t[:, -1, :, :]
             # print('A_social_t_last shape:', A_social_t_last.shape)
-            print('social matrix in decoder shape:', A_social_t_last.shape)
+
             dec_out = dec_in
             for layer in self.decoder_layers:
                 dec_out = layer(

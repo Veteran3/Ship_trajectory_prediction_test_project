@@ -1,0 +1,566 @@
+================================================================================
+Ship Trajectory Prediction with Transformer
+================================================================================
+Args in experiment:
+  task_name: ship_trajectory_forecast
+  is_training: 1
+  model_id: ship_traj
+  model: V2_3_2_ASTGNN
+  root_path: ./data/
+  train_data_path: train.npz
+  val_data_path: val.npz
+  test_data_path: test.npz
+  checkpoints: ./checkpoints/
+  seq_len: 8
+  pred_len: 12
+  num_ships: 17
+  num_features: 4
+  scale: 1
+  scale_type: standard
+  predict_position_only: 1
+  d_model: 64
+  n_heads: 8
+  e_layers: 4
+  d_layers: 4
+  d_ff: 256
+  factor: 5
+  dropout: 0.1
+  activation: gelu
+  output_attention: 0
+  batch_size: 32
+  learning_rate: 0.0001
+  loss: mse
+  train_epochs: 100
+  patience: 10
+  lradj: type1
+  use_gpu: 1
+  gpu_type: cuda
+  gpu: 0
+  use_multi_gpu: 0
+  devices: 0,1,2,3
+  num_workers: 4
+  use_amp: 0
+  seed: 2024
+  des: Exp
+  ANNEAL_START_EPOCH: 1
+  ANNEAL_END_EPOCH: 50
+  PROB_START: 1.0
+  PROB_END: 0.2
+  social_sigma: 1.0
+  tcpa_thresh: 300.0
+  dcpa_thresh: 1000.0
+================================================================================
+实验描述已保存到: experiments/ship_traj_V2_3_2_ASTGNN_sl8_pl12_dm64_nh8_el4_dl4_df256_Exp/run_seed2024_20251121010923/description.md
+Use GPU: cuda:0
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Training Stage
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Loading train data from: ./data/train.npz
+train dataset loaded:
+  X shape: (65852, 8, 17, 4)
+  y shape: (65852, 12, 17, 4)
+  X_mask shape: (65852, 8, 17)
+  y_mask shape: (65852, 12, 17)
+  ship_counts shape: (65852,)
+  global_ids shape: (65852, 17)
+  Number of samples: 65852
+  Average ship count: 5.16
+
+Normalization parameters (standard):
+  Longitude: mean=110.2374, std=0.0585
+  Latitude: mean=20.1747, std=0.0180
+  COG: mean=10.8425, std=1.7193
+  SOG: mean=171.0433, std=95.9676
+mask shape: (65852, 8, 17)
+mask shape: (65852, 12, 17)
+train dataset size: 65852
+Loading val data from: ./data/val.npz
+val dataset loaded:
+  X shape: (9055, 8, 17, 4)
+  y shape: (9055, 12, 17, 4)
+  X_mask shape: (9055, 8, 17)
+  y_mask shape: (9055, 12, 17)
+  ship_counts shape: (9055,)
+  global_ids shape: (9055, 17)
+  Number of samples: 9055
+  Average ship count: 5.16
+
+Loaded normalization parameters from: ./data/scaler_params.npy
+mask shape: (9055, 8, 17)
+mask shape: (9055, 12, 17)
+val dataset size: 9055
+Loading test data from: ./data/test.npz
+test dataset loaded:
+  X shape: (7409, 8, 17, 4)
+  y shape: (7409, 12, 17, 4)
+  X_mask shape: (7409, 8, 17)
+  y_mask shape: (7409, 12, 17)
+  ship_counts shape: (7409,)
+  global_ids shape: (7409, 17)
+  Number of samples: 7409
+  Average ship count: 5.16
+
+Loaded normalization parameters from: ./data/scaler_params.npy
+mask shape: (7409, 8, 17)
+mask shape: (7409, 12, 17)
+test dataset size: 7409
+	iters: 100, epoch: 1 | loss delta: 0.0536955,  loss absolute: 0.4357979
+	iters: 200, epoch: 1 | loss delta: 0.0216872,  loss absolute: 0.1868387
+	iters: 300, epoch: 1 | loss delta: 0.0172075,  loss absolute: 0.1320134
+	iters: 400, epoch: 1 | loss delta: 0.0099901,  loss absolute: 0.0979904
+	iters: 500, epoch: 1 | loss delta: 0.0075147,  loss absolute: 0.0740837
+	iters: 600, epoch: 1 | loss delta: 0.0058820,  loss absolute: 0.0566018
+	iters: 700, epoch: 1 | loss delta: 0.0049611,  loss absolute: 0.0518752
+	iters: 800, epoch: 1 | loss delta: 0.0042067,  loss absolute: 0.0405641
+	iters: 900, epoch: 1 | loss delta: 0.0038292,  loss absolute: 0.0435518
+	iters: 1000, epoch: 1 | loss delta: 0.0034527,  loss absolute: 0.0389954
+	iters: 1100, epoch: 1 | loss delta: 0.0031661,  loss absolute: 0.0319215
+	iters: 1200, epoch: 1 | loss delta: 0.0028509,  loss absolute: 0.0346777
+	iters: 1300, epoch: 1 | loss delta: 0.0026996,  loss absolute: 0.0295239
+	iters: 1400, epoch: 1 | loss delta: 0.0023408,  loss absolute: 0.0279165
+	iters: 1500, epoch: 1 | loss delta: 0.0021408,  loss absolute: 0.0231216
+	iters: 1600, epoch: 1 | loss delta: 0.0020699,  loss absolute: 0.0289012
+	iters: 1700, epoch: 1 | loss delta: 0.0019713,  loss absolute: 0.0235649
+	iters: 1800, epoch: 1 | loss delta: 0.0019460,  loss absolute: 0.0251504
+	iters: 1900, epoch: 1 | loss delta: 0.0017896,  loss absolute: 0.0211597
+	iters: 2000, epoch: 1 | loss delta: 0.0025156,  loss absolute: 0.0242729
+Epoch: 1 cost time: 1245.6115448474884
+Epoch: 1, Steps: 2057 | Train Loss: 0.0115738, 0.1742522 Vali Loss: 0.0003433, 0.0101170 Test Loss: 0.0003331, 0.0101084
+Validation loss decreased (inf --> 0.010117).  Saving model ...
+Updating learning rate to 0.0001
+	iters: 100, epoch: 2 | loss delta: 0.0016370,  loss absolute: 0.0198489
+	iters: 200, epoch: 2 | loss delta: 0.0013985,  loss absolute: 0.0160111
+	iters: 300, epoch: 2 | loss delta: 0.0013625,  loss absolute: 0.0178747
+	iters: 400, epoch: 2 | loss delta: 0.0011679,  loss absolute: 0.0130202
+	iters: 500, epoch: 2 | loss delta: 0.0011181,  loss absolute: 0.0142231
+	iters: 600, epoch: 2 | loss delta: 0.0011033,  loss absolute: 0.0115094
+	iters: 700, epoch: 2 | loss delta: 0.0010466,  loss absolute: 0.0119088
+	iters: 800, epoch: 2 | loss delta: 0.0009952,  loss absolute: 0.0115826
+	iters: 900, epoch: 2 | loss delta: 0.0010209,  loss absolute: 0.0144962
+	iters: 1000, epoch: 2 | loss delta: 0.0008509,  loss absolute: 0.0084177
+	iters: 1100, epoch: 2 | loss delta: 0.0009136,  loss absolute: 0.0099236
+	iters: 1200, epoch: 2 | loss delta: 0.0040870,  loss absolute: 0.0120223
+	iters: 1300, epoch: 2 | loss delta: 0.0007537,  loss absolute: 0.0080088
+	iters: 1400, epoch: 2 | loss delta: 0.0007308,  loss absolute: 0.0096058
+	iters: 1500, epoch: 2 | loss delta: 0.0007118,  loss absolute: 0.0101364
+	iters: 1600, epoch: 2 | loss delta: 0.0006439,  loss absolute: 0.0065855
+	iters: 1700, epoch: 2 | loss delta: 0.0006516,  loss absolute: 0.0077914
+	iters: 1800, epoch: 2 | loss delta: 0.0006465,  loss absolute: 0.0089142
+	iters: 1900, epoch: 2 | loss delta: 0.0006104,  loss absolute: 0.0084444
+	iters: 2000, epoch: 2 | loss delta: 0.0006143,  loss absolute: 0.0069068
+Epoch: 2 cost time: 1243.332640171051
+Epoch: 2, Steps: 2057 | Train Loss: 0.0010097, 0.0115300 Vali Loss: 0.0002182, 0.0040384 Test Loss: 0.0002071, 0.0039870
+Validation loss decreased (0.010117 --> 0.004038).  Saving model ...
+Updating learning rate to 5e-05
+	iters: 100, epoch: 3 | loss delta: 0.0006811,  loss absolute: 0.0071557
+	iters: 200, epoch: 3 | loss delta: 0.0004844,  loss absolute: 0.0051519
+	iters: 300, epoch: 3 | loss delta: 0.0008526,  loss absolute: 0.0068570
+	iters: 400, epoch: 3 | loss delta: 0.0004889,  loss absolute: 0.0061175
+	iters: 500, epoch: 3 | loss delta: 0.0004825,  loss absolute: 0.0063660
+	iters: 600, epoch: 3 | loss delta: 0.0004795,  loss absolute: 0.0067512
+	iters: 700, epoch: 3 | loss delta: 0.0004512,  loss absolute: 0.0051669
+	iters: 800, epoch: 3 | loss delta: 0.0004902,  loss absolute: 0.0049394
+	iters: 900, epoch: 3 | loss delta: 0.0004492,  loss absolute: 0.0059385
+	iters: 1000, epoch: 3 | loss delta: 0.0004900,  loss absolute: 0.0050639
+	iters: 1100, epoch: 3 | loss delta: 0.0004217,  loss absolute: 0.0056744
+	iters: 1200, epoch: 3 | loss delta: 0.0003967,  loss absolute: 0.0053957
+	iters: 1300, epoch: 3 | loss delta: 0.0003947,  loss absolute: 0.0045656
+	iters: 1400, epoch: 3 | loss delta: 0.0004060,  loss absolute: 0.0060764
+	iters: 1500, epoch: 3 | loss delta: 0.0009474,  loss absolute: 0.0045613
+	iters: 1600, epoch: 3 | loss delta: 0.0003929,  loss absolute: 0.0050718
+	iters: 1700, epoch: 3 | loss delta: 0.0003883,  loss absolute: 0.0038225
+	iters: 1800, epoch: 3 | loss delta: 0.0003568,  loss absolute: 0.0056542
+	iters: 1900, epoch: 3 | loss delta: 0.0003019,  loss absolute: 0.0038818
+	iters: 2000, epoch: 3 | loss delta: 0.0003488,  loss absolute: 0.0051863
+Epoch: 3 cost time: 1241.281793832779
+Epoch: 3, Steps: 2057 | Train Loss: 0.0004952, 0.0055749 Vali Loss: 0.0001917, 0.0028876 Test Loss: 0.0001772, 0.0027833
+Validation loss decreased (0.004038 --> 0.002888).  Saving model ...
+Updating learning rate to 2.5e-05
+	iters: 100, epoch: 4 | loss delta: 0.0005028,  loss absolute: 0.0046816
+	iters: 200, epoch: 4 | loss delta: 0.0003169,  loss absolute: 0.0040733
+	iters: 300, epoch: 4 | loss delta: 0.0003065,  loss absolute: 0.0044081
+	iters: 400, epoch: 4 | loss delta: 0.0003109,  loss absolute: 0.0046640
+	iters: 500, epoch: 4 | loss delta: 0.0004136,  loss absolute: 0.0037008
+	iters: 600, epoch: 4 | loss delta: 0.0003494,  loss absolute: 0.0037220
+	iters: 700, epoch: 4 | loss delta: 0.0003149,  loss absolute: 0.0040431
+	iters: 800, epoch: 4 | loss delta: 0.0003513,  loss absolute: 0.0033757
+	iters: 900, epoch: 4 | loss delta: 0.0002781,  loss absolute: 0.0038276
+	iters: 1000, epoch: 4 | loss delta: 0.0002904,  loss absolute: 0.0041471
+	iters: 1100, epoch: 4 | loss delta: 0.0003081,  loss absolute: 0.0048148
+	iters: 1200, epoch: 4 | loss delta: 0.0002748,  loss absolute: 0.0037484
+	iters: 1300, epoch: 4 | loss delta: 0.0003041,  loss absolute: 0.0036816
+	iters: 1400, epoch: 4 | loss delta: 0.0002463,  loss absolute: 0.0026946
+	iters: 1500, epoch: 4 | loss delta: 0.0002539,  loss absolute: 0.0030203
+	iters: 1600, epoch: 4 | loss delta: 0.0002747,  loss absolute: 0.0038237
+	iters: 1700, epoch: 4 | loss delta: 0.0002495,  loss absolute: 0.0030570
+	iters: 1800, epoch: 4 | loss delta: 0.0002800,  loss absolute: 0.0031310
+	iters: 1900, epoch: 4 | loss delta: 0.0002508,  loss absolute: 0.0027079
+	iters: 2000, epoch: 4 | loss delta: 0.0002545,  loss absolute: 0.0039325
+Epoch: 4 cost time: 1242.0028412342072
+Epoch: 4, Steps: 2057 | Train Loss: 0.0003589, 0.0040514 Vali Loss: 0.0001884, 0.0029045 Test Loss: 0.0001767, 0.0028069
+EarlyStopping counter: 1 out of 10
+Updating learning rate to 1.25e-05
+	iters: 100, epoch: 5 | loss delta: 0.0002741,  loss absolute: 0.0044673
+	iters: 200, epoch: 5 | loss delta: 0.0002783,  loss absolute: 0.0044839
+	iters: 300, epoch: 5 | loss delta: 0.0002531,  loss absolute: 0.0034338
+	iters: 400, epoch: 5 | loss delta: 0.0002406,  loss absolute: 0.0029477
+	iters: 500, epoch: 5 | loss delta: 0.0002457,  loss absolute: 0.0042997
+	iters: 600, epoch: 5 | loss delta: 0.0002565,  loss absolute: 0.0035116
+	iters: 700, epoch: 5 | loss delta: 0.0002444,  loss absolute: 0.0029763
+	iters: 800, epoch: 5 | loss delta: 0.0002363,  loss absolute: 0.0039796
+	iters: 900, epoch: 5 | loss delta: 0.0002232,  loss absolute: 0.0026374
+	iters: 1000, epoch: 5 | loss delta: 0.0002364,  loss absolute: 0.0035166
+	iters: 1100, epoch: 5 | loss delta: 0.0002370,  loss absolute: 0.0028790
+	iters: 1200, epoch: 5 | loss delta: 0.0003518,  loss absolute: 0.0031736
+	iters: 1300, epoch: 5 | loss delta: 0.0002155,  loss absolute: 0.0033548
+	iters: 1400, epoch: 5 | loss delta: 0.0002231,  loss absolute: 0.0030245
+	iters: 1500, epoch: 5 | loss delta: 0.0002393,  loss absolute: 0.0028727
+	iters: 1600, epoch: 5 | loss delta: 0.0002149,  loss absolute: 0.0027976
+	iters: 1700, epoch: 5 | loss delta: 0.0002301,  loss absolute: 0.0034092
+	iters: 1800, epoch: 5 | loss delta: 0.0002260,  loss absolute: 0.0036109
+	iters: 1900, epoch: 5 | loss delta: 0.0004596,  loss absolute: 0.0035691
+	iters: 2000, epoch: 5 | loss delta: 0.0001854,  loss absolute: 0.0026484
+Epoch: 5 cost time: 1256.5496113300323
+Epoch: 5, Steps: 2057 | Train Loss: 0.0003042, 0.0034690 Vali Loss: 0.0001864, 0.0026459 Test Loss: 0.0001700, 0.0025202
+Validation loss decreased (0.002888 --> 0.002646).  Saving model ...
+Updating learning rate to 6.25e-06
+	iters: 100, epoch: 6 | loss delta: 0.0003866,  loss absolute: 0.0029473
+	iters: 200, epoch: 6 | loss delta: 0.0001842,  loss absolute: 0.0023972
+	iters: 300, epoch: 6 | loss delta: 0.0002391,  loss absolute: 0.0035661
+	iters: 400, epoch: 6 | loss delta: 0.0001943,  loss absolute: 0.0025981
+	iters: 500, epoch: 6 | loss delta: 0.0002061,  loss absolute: 0.0027878
+	iters: 600, epoch: 6 | loss delta: 0.0002341,  loss absolute: 0.0050553
+	iters: 700, epoch: 6 | loss delta: 0.0001982,  loss absolute: 0.0027711
+	iters: 800, epoch: 6 | loss delta: 0.0002068,  loss absolute: 0.0030523
+	iters: 900, epoch: 6 | loss delta: 0.0002001,  loss absolute: 0.0024031
+	iters: 1000, epoch: 6 | loss delta: 0.0001941,  loss absolute: 0.0028436
+	iters: 1100, epoch: 6 | loss delta: 0.0002250,  loss absolute: 0.0040994
+	iters: 1200, epoch: 6 | loss delta: 0.0001899,  loss absolute: 0.0028550
+	iters: 1300, epoch: 6 | loss delta: 0.0002334,  loss absolute: 0.0034645
+	iters: 1400, epoch: 6 | loss delta: 0.0002001,  loss absolute: 0.0029403
+	iters: 1500, epoch: 6 | loss delta: 0.0001887,  loss absolute: 0.0027177
+	iters: 1600, epoch: 6 | loss delta: 0.0002052,  loss absolute: 0.0031107
+	iters: 1700, epoch: 6 | loss delta: 0.0002424,  loss absolute: 0.0037463
+	iters: 1800, epoch: 6 | loss delta: 0.0001880,  loss absolute: 0.0024555
+	iters: 1900, epoch: 6 | loss delta: 0.0001984,  loss absolute: 0.0032093
+	iters: 2000, epoch: 6 | loss delta: 0.0002535,  loss absolute: 0.0045725
+Epoch: 6 cost time: 1266.5579528808594
+Epoch: 6, Steps: 2057 | Train Loss: 0.0002799, 0.0032046 Vali Loss: 0.0001762, 0.0024166 Test Loss: 0.0001659, 0.0023362
+Validation loss decreased (0.002646 --> 0.002417).  Saving model ...
+Updating learning rate to 3.125e-06
+	iters: 100, epoch: 7 | loss delta: 0.0003161,  loss absolute: 0.0028931
+	iters: 200, epoch: 7 | loss delta: 0.0002974,  loss absolute: 0.0031946
+	iters: 300, epoch: 7 | loss delta: 0.0002764,  loss absolute: 0.0047134
+	iters: 400, epoch: 7 | loss delta: 0.0002033,  loss absolute: 0.0029680
+	iters: 500, epoch: 7 | loss delta: 0.0001978,  loss absolute: 0.0031814
+	iters: 600, epoch: 7 | loss delta: 0.0001996,  loss absolute: 0.0025387
+	iters: 700, epoch: 7 | loss delta: 0.0002836,  loss absolute: 0.0044170
+	iters: 800, epoch: 7 | loss delta: 0.0002220,  loss absolute: 0.0032454
+	iters: 900, epoch: 7 | loss delta: 0.0001710,  loss absolute: 0.0025017
+	iters: 1000, epoch: 7 | loss delta: 0.0003256,  loss absolute: 0.0024601
+	iters: 1100, epoch: 7 | loss delta: 0.0001954,  loss absolute: 0.0029590
+	iters: 1200, epoch: 7 | loss delta: 0.0002196,  loss absolute: 0.0038427
+	iters: 1300, epoch: 7 | loss delta: 0.0002166,  loss absolute: 0.0037732
+	iters: 1400, epoch: 7 | loss delta: 0.0001992,  loss absolute: 0.0040452
+	iters: 1500, epoch: 7 | loss delta: 0.0001960,  loss absolute: 0.0033571
+	iters: 1600, epoch: 7 | loss delta: 0.0001905,  loss absolute: 0.0026641
+	iters: 1700, epoch: 7 | loss delta: 0.0001942,  loss absolute: 0.0029520
+	iters: 1800, epoch: 7 | loss delta: 0.0002399,  loss absolute: 0.0037298
+	iters: 1900, epoch: 7 | loss delta: 0.0001912,  loss absolute: 0.0024844
+	iters: 2000, epoch: 7 | loss delta: 0.0002011,  loss absolute: 0.0026115
+Epoch: 7 cost time: 1247.590215921402
+Epoch: 7, Steps: 2057 | Train Loss: 0.0002675, 0.0030546 Vali Loss: 0.0001798, 0.0024097 Test Loss: 0.0001652, 0.0023073
+Validation loss decreased (0.002417 --> 0.002410).  Saving model ...
+Updating learning rate to 1.5625e-06
+	iters: 100, epoch: 8 | loss delta: 0.0005982,  loss absolute: 0.0040491
+	iters: 200, epoch: 8 | loss delta: 0.0004045,  loss absolute: 0.0025508
+	iters: 300, epoch: 8 | loss delta: 0.0003612,  loss absolute: 0.0026274
+	iters: 400, epoch: 8 | loss delta: 0.0001776,  loss absolute: 0.0022601
+	iters: 500, epoch: 8 | loss delta: 0.0001790,  loss absolute: 0.0026488
+	iters: 600, epoch: 8 | loss delta: 0.0002639,  loss absolute: 0.0032374
+	iters: 700, epoch: 8 | loss delta: 0.0002327,  loss absolute: 0.0028271
+	iters: 800, epoch: 8 | loss delta: 0.0001934,  loss absolute: 0.0022051
+	iters: 900, epoch: 8 | loss delta: 0.0004224,  loss absolute: 0.0025851
+	iters: 1000, epoch: 8 | loss delta: 0.0003508,  loss absolute: 0.0038763
+	iters: 1100, epoch: 8 | loss delta: 0.0003173,  loss absolute: 0.0036063
+	iters: 1200, epoch: 8 | loss delta: 0.0002571,  loss absolute: 0.0029885
+	iters: 1300, epoch: 8 | loss delta: 0.0001686,  loss absolute: 0.0026958
+	iters: 1400, epoch: 8 | loss delta: 0.0001837,  loss absolute: 0.0029591
+	iters: 1500, epoch: 8 | loss delta: 0.0001999,  loss absolute: 0.0031112
+	iters: 1600, epoch: 8 | loss delta: 0.0002184,  loss absolute: 0.0029435
+	iters: 1700, epoch: 8 | loss delta: 0.0001727,  loss absolute: 0.0022725
+	iters: 1800, epoch: 8 | loss delta: 0.0002276,  loss absolute: 0.0027650
+	iters: 1900, epoch: 8 | loss delta: 0.0001884,  loss absolute: 0.0029299
+	iters: 2000, epoch: 8 | loss delta: 0.0001689,  loss absolute: 0.0027408
+Epoch: 8 cost time: 1240.798671245575
+Epoch: 8, Steps: 2057 | Train Loss: 0.0002626, 0.0030090 Vali Loss: 0.0001764, 0.0023447 Test Loss: 0.0001642, 0.0022597
+Validation loss decreased (0.002410 --> 0.002345).  Saving model ...
+Updating learning rate to 7.8125e-07
+	iters: 100, epoch: 9 | loss delta: 0.0002441,  loss absolute: 0.0023903
+	iters: 200, epoch: 9 | loss delta: 0.0002220,  loss absolute: 0.0041446
+	iters: 300, epoch: 9 | loss delta: 0.0001802,  loss absolute: 0.0024169
+	iters: 400, epoch: 9 | loss delta: 0.0004210,  loss absolute: 0.0031808
+	iters: 500, epoch: 9 | loss delta: 0.0004680,  loss absolute: 0.0034001
+	iters: 600, epoch: 9 | loss delta: 0.0002724,  loss absolute: 0.0031706
+	iters: 700, epoch: 9 | loss delta: 0.0004148,  loss absolute: 0.0033921
+	iters: 800, epoch: 9 | loss delta: 0.0009526,  loss absolute: 0.0036133
+	iters: 900, epoch: 9 | loss delta: 0.0001825,  loss absolute: 0.0025650
+	iters: 1000, epoch: 9 | loss delta: 0.0002797,  loss absolute: 0.0024578
+	iters: 1100, epoch: 9 | loss delta: 0.0005538,  loss absolute: 0.0022347
+	iters: 1200, epoch: 9 | loss delta: 0.0002014,  loss absolute: 0.0032206
+	iters: 1300, epoch: 9 | loss delta: 0.0001851,  loss absolute: 0.0029350
+	iters: 1400, epoch: 9 | loss delta: 0.0001751,  loss absolute: 0.0024527
+	iters: 1500, epoch: 9 | loss delta: 0.0001832,  loss absolute: 0.0027615
+	iters: 1600, epoch: 9 | loss delta: 0.0001931,  loss absolute: 0.0037481
+	iters: 1700, epoch: 9 | loss delta: 0.0002560,  loss absolute: 0.0029573
+	iters: 1800, epoch: 9 | loss delta: 0.0002398,  loss absolute: 0.0031751
+	iters: 1900, epoch: 9 | loss delta: 0.0002390,  loss absolute: 0.0036110
+	iters: 2000, epoch: 9 | loss delta: 0.0003086,  loss absolute: 0.0043358
+Epoch: 9 cost time: 1243.20041680336
+Epoch: 9, Steps: 2057 | Train Loss: 0.0002593, 0.0029787 Vali Loss: 0.0001792, 0.0023956 Test Loss: 0.0001649, 0.0022978
+EarlyStopping counter: 1 out of 10
+Updating learning rate to 3.90625e-07
+	iters: 100, epoch: 10 | loss delta: 0.0002273,  loss absolute: 0.0037457
+	iters: 200, epoch: 10 | loss delta: 0.0001651,  loss absolute: 0.0020189
+	iters: 300, epoch: 10 | loss delta: 0.0001988,  loss absolute: 0.0032662
+	iters: 400, epoch: 10 | loss delta: 0.0001697,  loss absolute: 0.0030018
+	iters: 500, epoch: 10 | loss delta: 0.0001904,  loss absolute: 0.0026640
+	iters: 600, epoch: 10 | loss delta: 0.0001801,  loss absolute: 0.0025242
+	iters: 700, epoch: 10 | loss delta: 0.0002123,  loss absolute: 0.0024375
+	iters: 800, epoch: 10 | loss delta: 0.0001795,  loss absolute: 0.0023606
+	iters: 900, epoch: 10 | loss delta: 0.0001571,  loss absolute: 0.0021584
+	iters: 1000, epoch: 10 | loss delta: 0.0002493,  loss absolute: 0.0028343
+	iters: 1100, epoch: 10 | loss delta: 0.0002019,  loss absolute: 0.0029051
+	iters: 1200, epoch: 10 | loss delta: 0.0002092,  loss absolute: 0.0029883
+	iters: 1300, epoch: 10 | loss delta: 0.0001988,  loss absolute: 0.0030455
+	iters: 1400, epoch: 10 | loss delta: 0.0002042,  loss absolute: 0.0023683
+	iters: 1500, epoch: 10 | loss delta: 0.0002840,  loss absolute: 0.0028206
+	iters: 1600, epoch: 10 | loss delta: 0.0002040,  loss absolute: 0.0032084
+	iters: 1700, epoch: 10 | loss delta: 0.0001785,  loss absolute: 0.0026006
+	iters: 1800, epoch: 10 | loss delta: 0.0002147,  loss absolute: 0.0029791
+	iters: 1900, epoch: 10 | loss delta: 0.0001832,  loss absolute: 0.0034725
+	iters: 2000, epoch: 10 | loss delta: 0.0001876,  loss absolute: 0.0029030
+Epoch: 10 cost time: 1244.614667892456
+Epoch: 10, Steps: 2057 | Train Loss: 0.0002570, 0.0029590 Vali Loss: 0.0001780, 0.0023673 Test Loss: 0.0001643, 0.0022737
+EarlyStopping counter: 2 out of 10
+Updating learning rate to 1.953125e-07
+	iters: 100, epoch: 11 | loss delta: 0.0002088,  loss absolute: 0.0033792
+	iters: 200, epoch: 11 | loss delta: 0.0001802,  loss absolute: 0.0029587
+	iters: 300, epoch: 11 | loss delta: 0.0001985,  loss absolute: 0.0024956
+	iters: 400, epoch: 11 | loss delta: 0.0002686,  loss absolute: 0.0036395
+	iters: 500, epoch: 11 | loss delta: 0.0001938,  loss absolute: 0.0026901
+	iters: 600, epoch: 11 | loss delta: 0.0001820,  loss absolute: 0.0029532
+	iters: 700, epoch: 11 | loss delta: 0.0004628,  loss absolute: 0.0041925
+	iters: 800, epoch: 11 | loss delta: 0.0001846,  loss absolute: 0.0022403
+	iters: 900, epoch: 11 | loss delta: 0.0009012,  loss absolute: 0.0028424
+	iters: 1000, epoch: 11 | loss delta: 0.0002296,  loss absolute: 0.0025406
+	iters: 1100, epoch: 11 | loss delta: 0.0002891,  loss absolute: 0.0026186
+	iters: 1200, epoch: 11 | loss delta: 0.0003337,  loss absolute: 0.0034710
+	iters: 1300, epoch: 11 | loss delta: 0.0002620,  loss absolute: 0.0036200
+	iters: 1400, epoch: 11 | loss delta: 0.0002420,  loss absolute: 0.0022878
+	iters: 1500, epoch: 11 | loss delta: 0.0001806,  loss absolute: 0.0029784
+	iters: 1600, epoch: 11 | loss delta: 0.0002418,  loss absolute: 0.0036317
+	iters: 1700, epoch: 11 | loss delta: 0.0002110,  loss absolute: 0.0027482
+	iters: 1800, epoch: 11 | loss delta: 0.0001561,  loss absolute: 0.0023685
+	iters: 1900, epoch: 11 | loss delta: 0.0001915,  loss absolute: 0.0028263
+	iters: 2000, epoch: 11 | loss delta: 0.0003647,  loss absolute: 0.0026961
+Epoch: 11 cost time: 1244.5389983654022
+Epoch: 11, Steps: 2057 | Train Loss: 0.0002564, 0.0029414 Vali Loss: 0.0001747, 0.0023897 Test Loss: 0.0001647, 0.0022965
+EarlyStopping counter: 3 out of 10
+Updating learning rate to 9.765625e-08
+	iters: 100, epoch: 12 | loss delta: 0.0002424,  loss absolute: 0.0020344
+	iters: 200, epoch: 12 | loss delta: 0.0001918,  loss absolute: 0.0034372
+	iters: 300, epoch: 12 | loss delta: 0.0001914,  loss absolute: 0.0028680
+	iters: 400, epoch: 12 | loss delta: 0.0001753,  loss absolute: 0.0026664
+	iters: 500, epoch: 12 | loss delta: 0.0001859,  loss absolute: 0.0025735
+	iters: 600, epoch: 12 | loss delta: 0.0008157,  loss absolute: 0.0037879
+	iters: 700, epoch: 12 | loss delta: 0.0001906,  loss absolute: 0.0030630
+	iters: 800, epoch: 12 | loss delta: 0.0001858,  loss absolute: 0.0027310
+	iters: 900, epoch: 12 | loss delta: 0.0001762,  loss absolute: 0.0029052
+	iters: 1000, epoch: 12 | loss delta: 0.0001697,  loss absolute: 0.0022702
+	iters: 1100, epoch: 12 | loss delta: 0.0001809,  loss absolute: 0.0026143
+	iters: 1200, epoch: 12 | loss delta: 0.0002060,  loss absolute: 0.0035495
+	iters: 1300, epoch: 12 | loss delta: 0.0002121,  loss absolute: 0.0034581
+	iters: 1400, epoch: 12 | loss delta: 0.0001926,  loss absolute: 0.0028991
+	iters: 1500, epoch: 12 | loss delta: 0.0003693,  loss absolute: 0.0030040
+	iters: 1600, epoch: 12 | loss delta: 0.0003014,  loss absolute: 0.0023906
+	iters: 1700, epoch: 12 | loss delta: 0.0004994,  loss absolute: 0.0059043
+	iters: 1800, epoch: 12 | loss delta: 0.0001723,  loss absolute: 0.0024577
+	iters: 1900, epoch: 12 | loss delta: 0.0002121,  loss absolute: 0.0029896
+	iters: 2000, epoch: 12 | loss delta: 0.0002049,  loss absolute: 0.0032603
+Epoch: 12 cost time: 1242.8816738128662
+Epoch: 12, Steps: 2057 | Train Loss: 0.0002566, 0.0029386 Vali Loss: 0.0001763, 0.0023936 Test Loss: 0.0001647, 0.0022962
+EarlyStopping counter: 4 out of 10
+Updating learning rate to 4.8828125e-08
+	iters: 100, epoch: 13 | loss delta: 0.0004523,  loss absolute: 0.0026764
+	iters: 200, epoch: 13 | loss delta: 0.0001982,  loss absolute: 0.0030855
+	iters: 300, epoch: 13 | loss delta: 0.0001987,  loss absolute: 0.0035652
+	iters: 400, epoch: 13 | loss delta: 0.0002761,  loss absolute: 0.0028378
+	iters: 500, epoch: 13 | loss delta: 0.0001973,  loss absolute: 0.0031649
+	iters: 600, epoch: 13 | loss delta: 0.0002007,  loss absolute: 0.0038321
+	iters: 700, epoch: 13 | loss delta: 0.0002796,  loss absolute: 0.0030506
+	iters: 800, epoch: 13 | loss delta: 0.0001883,  loss absolute: 0.0024177
+	iters: 900, epoch: 13 | loss delta: 0.0003990,  loss absolute: 0.0035607
+	iters: 1000, epoch: 13 | loss delta: 0.0001861,  loss absolute: 0.0032134
+	iters: 1100, epoch: 13 | loss delta: 0.0001763,  loss absolute: 0.0028731
+	iters: 1200, epoch: 13 | loss delta: 0.0001792,  loss absolute: 0.0026208
+	iters: 1300, epoch: 13 | loss delta: 0.0003115,  loss absolute: 0.0048319
+	iters: 1400, epoch: 13 | loss delta: 0.0001691,  loss absolute: 0.0023357
+	iters: 1500, epoch: 13 | loss delta: 0.0001758,  loss absolute: 0.0026582
+	iters: 1600, epoch: 13 | loss delta: 0.0002019,  loss absolute: 0.0029866
+	iters: 1700, epoch: 13 | loss delta: 0.0004248,  loss absolute: 0.0041917
+	iters: 1800, epoch: 13 | loss delta: 0.0001891,  loss absolute: 0.0029926
+	iters: 1900, epoch: 13 | loss delta: 0.0002042,  loss absolute: 0.0030693
+	iters: 2000, epoch: 13 | loss delta: 0.0001796,  loss absolute: 0.0034802
+Epoch: 13 cost time: 1251.526532649994
+Epoch: 13, Steps: 2057 | Train Loss: 0.0002569, 0.0029507 Vali Loss: 0.0001773, 0.0023605 Test Loss: 0.0001643, 0.0022752
+EarlyStopping counter: 5 out of 10
+Updating learning rate to 2.44140625e-08
+	iters: 100, epoch: 14 | loss delta: 0.0001717,  loss absolute: 0.0024727
+	iters: 200, epoch: 14 | loss delta: 0.0001870,  loss absolute: 0.0030074
+	iters: 300, epoch: 14 | loss delta: 0.0001737,  loss absolute: 0.0029864
+	iters: 400, epoch: 14 | loss delta: 0.0002412,  loss absolute: 0.0022702
+	iters: 500, epoch: 14 | loss delta: 0.0001833,  loss absolute: 0.0029346
+	iters: 600, epoch: 14 | loss delta: 0.0002020,  loss absolute: 0.0025143
+	iters: 700, epoch: 14 | loss delta: 0.0001710,  loss absolute: 0.0026536
+	iters: 800, epoch: 14 | loss delta: 0.0002069,  loss absolute: 0.0037623
+	iters: 900, epoch: 14 | loss delta: 0.0001671,  loss absolute: 0.0024554
+	iters: 1000, epoch: 14 | loss delta: 0.0002053,  loss absolute: 0.0025904
+	iters: 1100, epoch: 14 | loss delta: 0.0001679,  loss absolute: 0.0022131
+	iters: 1200, epoch: 14 | loss delta: 0.0002934,  loss absolute: 0.0030424
+	iters: 1300, epoch: 14 | loss delta: 0.0002085,  loss absolute: 0.0028261
+	iters: 1400, epoch: 14 | loss delta: 0.0002294,  loss absolute: 0.0035193
+	iters: 1500, epoch: 14 | loss delta: 0.0003543,  loss absolute: 0.0037429
+	iters: 1600, epoch: 14 | loss delta: 0.0001656,  loss absolute: 0.0024603
+	iters: 1700, epoch: 14 | loss delta: 0.0001887,  loss absolute: 0.0035398
+	iters: 1800, epoch: 14 | loss delta: 0.0001887,  loss absolute: 0.0024723
+	iters: 1900, epoch: 14 | loss delta: 0.0001948,  loss absolute: 0.0026838
+	iters: 2000, epoch: 14 | loss delta: 0.0002201,  loss absolute: 0.0024510
+Epoch: 14 cost time: 1242.053964138031
+Epoch: 14, Steps: 2057 | Train Loss: 0.0002564, 0.0029370 Vali Loss: 0.0001762, 0.0023853 Test Loss: 0.0001646, 0.0022896
+EarlyStopping counter: 6 out of 10
+Updating learning rate to 1.220703125e-08
+	iters: 100, epoch: 15 | loss delta: 0.0001940,  loss absolute: 0.0026185
+	iters: 200, epoch: 15 | loss delta: 0.0002062,  loss absolute: 0.0035752
+	iters: 300, epoch: 15 | loss delta: 0.0004215,  loss absolute: 0.0031168
+	iters: 400, epoch: 15 | loss delta: 0.0001620,  loss absolute: 0.0022744
+	iters: 500, epoch: 15 | loss delta: 0.0002108,  loss absolute: 0.0036875
+	iters: 600, epoch: 15 | loss delta: 0.0001747,  loss absolute: 0.0023636
+	iters: 700, epoch: 15 | loss delta: 0.0001774,  loss absolute: 0.0024249
+	iters: 800, epoch: 15 | loss delta: 0.0001820,  loss absolute: 0.0023718
+	iters: 900, epoch: 15 | loss delta: 0.0001807,  loss absolute: 0.0030348
+	iters: 1000, epoch: 15 | loss delta: 0.0001804,  loss absolute: 0.0026219
+	iters: 1100, epoch: 15 | loss delta: 0.0001695,  loss absolute: 0.0024644
+	iters: 1200, epoch: 15 | loss delta: 0.0004204,  loss absolute: 0.0031672
+	iters: 1300, epoch: 15 | loss delta: 0.0001895,  loss absolute: 0.0030366
+	iters: 1400, epoch: 15 | loss delta: 0.0001839,  loss absolute: 0.0028357
+	iters: 1500, epoch: 15 | loss delta: 0.0007346,  loss absolute: 0.0029311
+	iters: 1600, epoch: 15 | loss delta: 0.0001772,  loss absolute: 0.0028115
+	iters: 1700, epoch: 15 | loss delta: 0.0002045,  loss absolute: 0.0032816
+	iters: 1800, epoch: 15 | loss delta: 0.0001788,  loss absolute: 0.0026748
+	iters: 1900, epoch: 15 | loss delta: 0.0001831,  loss absolute: 0.0035083
+	iters: 2000, epoch: 15 | loss delta: 0.0001615,  loss absolute: 0.0023262
+Epoch: 15 cost time: 1240.1761045455933
+Epoch: 15, Steps: 2057 | Train Loss: 0.0002557, 0.0029405 Vali Loss: 0.0001748, 0.0023799 Test Loss: 0.0001646, 0.0022883
+EarlyStopping counter: 7 out of 10
+Updating learning rate to 6.103515625e-09
+	iters: 100, epoch: 16 | loss delta: 0.0003088,  loss absolute: 0.0024552
+	iters: 200, epoch: 16 | loss delta: 0.0001815,  loss absolute: 0.0026956
+	iters: 300, epoch: 16 | loss delta: 0.0005321,  loss absolute: 0.0030661
+	iters: 400, epoch: 16 | loss delta: 0.0001665,  loss absolute: 0.0021494
+	iters: 500, epoch: 16 | loss delta: 0.0002168,  loss absolute: 0.0024634
+	iters: 600, epoch: 16 | loss delta: 0.0006966,  loss absolute: 0.0028411
+	iters: 700, epoch: 16 | loss delta: 0.0001741,  loss absolute: 0.0023528
+	iters: 800, epoch: 16 | loss delta: 0.0001764,  loss absolute: 0.0025798
+	iters: 900, epoch: 16 | loss delta: 0.0001957,  loss absolute: 0.0024762
+	iters: 1000, epoch: 16 | loss delta: 0.0009738,  loss absolute: 0.0032568
+	iters: 1100, epoch: 16 | loss delta: 0.0001975,  loss absolute: 0.0034332
+	iters: 1200, epoch: 16 | loss delta: 0.0002179,  loss absolute: 0.0037810
+	iters: 1300, epoch: 16 | loss delta: 0.0001632,  loss absolute: 0.0024516
+	iters: 1400, epoch: 16 | loss delta: 0.0001722,  loss absolute: 0.0027325
+	iters: 1500, epoch: 16 | loss delta: 0.0003328,  loss absolute: 0.0042506
+	iters: 1600, epoch: 16 | loss delta: 0.0002681,  loss absolute: 0.0027532
+	iters: 1700, epoch: 16 | loss delta: 0.0001854,  loss absolute: 0.0027387
+	iters: 1800, epoch: 16 | loss delta: 0.0005338,  loss absolute: 0.0036604
+	iters: 1900, epoch: 16 | loss delta: 0.0001867,  loss absolute: 0.0031505
+	iters: 2000, epoch: 16 | loss delta: 0.0001812,  loss absolute: 0.0027349
+Epoch: 16 cost time: 1272.8359923362732
+Epoch: 16, Steps: 2057 | Train Loss: 0.0002566, 0.0029359 Vali Loss: 0.0001753, 0.0023770 Test Loss: 0.0001646, 0.0022889
+EarlyStopping counter: 8 out of 10
+Updating learning rate to 3.0517578125e-09
+	iters: 100, epoch: 17 | loss delta: 0.0001822,  loss absolute: 0.0027245
+	iters: 200, epoch: 17 | loss delta: 0.0003633,  loss absolute: 0.0024952
+	iters: 300, epoch: 17 | loss delta: 0.0001726,  loss absolute: 0.0027065
+	iters: 400, epoch: 17 | loss delta: 0.0001832,  loss absolute: 0.0023585
+	iters: 500, epoch: 17 | loss delta: 0.0001825,  loss absolute: 0.0028418
+	iters: 600, epoch: 17 | loss delta: 0.0002042,  loss absolute: 0.0029051
+	iters: 700, epoch: 17 | loss delta: 0.0001999,  loss absolute: 0.0037668
+	iters: 800, epoch: 17 | loss delta: 0.0001904,  loss absolute: 0.0021979
+	iters: 900, epoch: 17 | loss delta: 0.0009626,  loss absolute: 0.0033897
+	iters: 1000, epoch: 17 | loss delta: 0.0001855,  loss absolute: 0.0024407
+	iters: 1100, epoch: 17 | loss delta: 0.0002176,  loss absolute: 0.0030938
+	iters: 1200, epoch: 17 | loss delta: 0.0001927,  loss absolute: 0.0024050
+	iters: 1300, epoch: 17 | loss delta: 0.0001882,  loss absolute: 0.0029160
+	iters: 1400, epoch: 17 | loss delta: 0.0001730,  loss absolute: 0.0027801
+	iters: 1500, epoch: 17 | loss delta: 0.0002119,  loss absolute: 0.0026767
+	iters: 1600, epoch: 17 | loss delta: 0.0001754,  loss absolute: 0.0028759
+	iters: 1700, epoch: 17 | loss delta: 0.0001684,  loss absolute: 0.0027672
+	iters: 1800, epoch: 17 | loss delta: 0.0009108,  loss absolute: 0.0040721
+	iters: 1900, epoch: 17 | loss delta: 0.0001699,  loss absolute: 0.0023760
+	iters: 2000, epoch: 17 | loss delta: 0.0001749,  loss absolute: 0.0028410
+Epoch: 17 cost time: 1271.6098465919495
+Epoch: 17, Steps: 2057 | Train Loss: 0.0002561, 0.0029333 Vali Loss: 0.0001770, 0.0023829 Test Loss: 0.0001646, 0.0022881
+EarlyStopping counter: 9 out of 10
+Updating learning rate to 1.52587890625e-09
+	iters: 100, epoch: 18 | loss delta: 0.0002024,  loss absolute: 0.0034948
+	iters: 200, epoch: 18 | loss delta: 0.0003996,  loss absolute: 0.0025268
+	iters: 300, epoch: 18 | loss delta: 0.0001742,  loss absolute: 0.0026933
+	iters: 400, epoch: 18 | loss delta: 0.0001917,  loss absolute: 0.0035692
+	iters: 500, epoch: 18 | loss delta: 0.0002961,  loss absolute: 0.0036655
+	iters: 600, epoch: 18 | loss delta: 0.0002334,  loss absolute: 0.0037630
+	iters: 700, epoch: 18 | loss delta: 0.0002329,  loss absolute: 0.0038583
+	iters: 800, epoch: 18 | loss delta: 0.0001740,  loss absolute: 0.0024382
+	iters: 900, epoch: 18 | loss delta: 0.0002613,  loss absolute: 0.0027851
+	iters: 1000, epoch: 18 | loss delta: 0.0002086,  loss absolute: 0.0024425
+	iters: 1100, epoch: 18 | loss delta: 0.0001961,  loss absolute: 0.0028787
+	iters: 1200, epoch: 18 | loss delta: 0.0001631,  loss absolute: 0.0026063
+	iters: 1300, epoch: 18 | loss delta: 0.0001747,  loss absolute: 0.0026851
+	iters: 1400, epoch: 18 | loss delta: 0.0001837,  loss absolute: 0.0026812
+	iters: 1500, epoch: 18 | loss delta: 0.0001983,  loss absolute: 0.0031445
+	iters: 1600, epoch: 18 | loss delta: 0.0001667,  loss absolute: 0.0027342
+	iters: 1700, epoch: 18 | loss delta: 0.0001823,  loss absolute: 0.0027199
+	iters: 1800, epoch: 18 | loss delta: 0.0002201,  loss absolute: 0.0033750
+	iters: 1900, epoch: 18 | loss delta: 0.0001795,  loss absolute: 0.0026808
+	iters: 2000, epoch: 18 | loss delta: 0.0036231,  loss absolute: 0.0053748
+Epoch: 18 cost time: 1271.1747353076935
+Epoch: 18, Steps: 2057 | Train Loss: 0.0002566, 0.0029394 Vali Loss: 0.0001769, 0.0023853 Test Loss: 0.0001646, 0.0022879
+EarlyStopping counter: 10 out of 10
+Early stopping
+
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Testing Stage
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Loading test data from: ./data/test.npz
+test dataset loaded:
+  X shape: (7409, 8, 17, 4)
+  y shape: (7409, 12, 17, 4)
+  X_mask shape: (7409, 8, 17)
+  y_mask shape: (7409, 12, 17)
+  ship_counts shape: (7409,)
+  global_ids shape: (7409, 17)
+  Number of samples: 7409
+  Average ship count: 5.16
+
+Loaded normalization parameters from: ./data/scaler_params.npy
+mask shape: (7409, 8, 17)
+mask shape: (7409, 12, 17)
+test dataset size: 7409
+loading model
+test shape: (7392, 12, 17, 2) (7392, 12, 17, 2) (7392, 12, 17)
+Metrics (on valid data only):
+mse:0.0023, mae:0.0254, rmse:0.0475, mape:0.3115, mspe:438.6620
+ADE:0.0410, FDE:0.0810
+
+================================================================================
+Experiment Finished!
+================================================================================
