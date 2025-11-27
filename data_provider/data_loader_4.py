@@ -498,6 +498,10 @@ class ShipTrajectoryDataset(Dataset):
         seq_x = self._transform_features(seq_x, seq_x_mask)
         seq_y = self._transform_features(seq_y, seq_y_mask)
         
+        # print('seq_x shape before lane concat:', seq_x.shape)
+        # print('next_lanes_feats shape:', next_lanes_feats.shape
+        #       , 'lane_dir_feats shape:', lane_dir_feats.shape)
+
         # 将航道特征拼到 seq_x 上
         seq_x_final = np.concatenate([seq_x, lane_feats, next_lanes_feats, lane_dir_feats], axis=-1)  # 拼接后的 seq_x: [T_in, N, D]
 
@@ -1078,22 +1082,32 @@ class ShipTrajectoryDataset(Dataset):
                 # 我先给一个“如果 lanes 是 LineString” 的示意写法：
 
                 line = self.lanes[name]   # 假设是 shapely.geometry.LineString
-
+                
                 # 如果 extra 是“沿线弧长 s”（0~line.length），可以这样：
                 #   s = extra
                 # 如果 entry 本身就是在这条 line 上的点，可以用 line.project(entry) 算 s：
                 from shapely.ops import nearest_points
-                # 通用写法：取在该 line 上最近点 p_on
                 p_query = Point(x, y)
-                p_on = nearest_points(p_query, line)[1]
-                s = line.project(p_on)    # 弧长参数
+                try:
+                    line_geom = line['center']  # 把几何对象提取出来
+                    p_on = nearest_points(p_query, line_geom)[1]
+                except TypeError as e:
+                    print(f"DEBUG INFO: Error in nearest_points")
+                    print(f"Type of p_query: {type(p_query)}, Value: {p_query}")
+                    print(f"Type of line: {type(line)}, Value: {line}")
+                    raise e # 重新抛出异常以便查看 traceback
+
+                # 通用写法：取在该 line 上最近点 p_on
+                
+                # p_on = nearest_points(p_query, line)[1]
+                s = line_geom.project(p_on)    # 弧长参数
 
                 # 取前后两个很近的点，近似切线方向
                 ds = 1.0  # 1 米 / 1 单位（根据你的坐标尺度调整）
                 s1 = max(0.0, s - ds)
-                s2 = min(line.length, s + ds)
-                p1 = line.interpolate(s1)
-                p2 = line.interpolate(s2)
+                s2 = min(line_geom.length, s + ds)
+                p1 = line_geom.interpolate(s1)
+                p2 = line_geom.interpolate(s2)
 
                 dx = p2.x - p1.x
                 dy = p2.y - p1.y

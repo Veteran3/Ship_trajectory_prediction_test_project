@@ -53,6 +53,7 @@ def get_args(data):
 30s数据集
 添加航道信息
 添加 next lane 信息
+添加 lane_dir 信息
 
 """
     # ==================== 基本配置 ====================
@@ -62,7 +63,7 @@ def get_args(data):
                         help='status: 1 for training, 0 for testing')
     parser.add_argument('--model_id', type=str, default='ship_traj',
                         help='model id')
-    parser.add_argument('--model', type=str, default='V2_3_3_ASTGNN',
+    parser.add_argument('--model', type=str, default='V3_1_0_ASTGNN',
                         help='model name')
     
     # ==================== 数据配置 ====================

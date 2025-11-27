@@ -75,9 +75,6 @@ class Exp_Forecasting(Exp_Basic):
                 mask_x = mask_x.to(self.device)
                 mask_y = mask_y.to(self.device)
                 batch_y = batch_y.float().to(self.device)
-                
-                next_lane = vali_loader.get("next_lane_onehot", None)
-                lane_dir  = vali_loader.get("lane_dir_feats", None)
 
                 outputs_deltas = self.model(
                     x_enc=batch_x, 
@@ -86,8 +83,6 @@ class Exp_Forecasting(Exp_Basic):
                     mask_y=mask_y,
                     A_social_t=A_social.to(self.device),
                     edge_features=edge_features.to(self.device),
-                    next_lane_onehot=next_lane,
-                    lane_dir_feats=lane_dir
                 ) 
                 
                 loss, loss_absolute = self.model.loss(
@@ -148,9 +143,6 @@ class Exp_Forecasting(Exp_Basic):
                 mask_x = mask_x.to(self.device)
                 mask_y = mask_y.to(self.device)
                 batch_y = batch_y.float().to(self.device)
-                
-                next_lane = train_loader.get("next_lane_onehot", None)
-                lane_dir  = train_loader.get("lane_dir_feats", None)
 
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
@@ -181,8 +173,6 @@ class Exp_Forecasting(Exp_Basic):
                         mask_y=mask_y,
                         A_social_t=A_social.to(self.device),
                         edge_features=edge_features.to(self.device),
-                        next_lane_onehot=next_lane,
-                        lane_dir_feats=lane_dir
                     )
                     
                     loss, loss_absolute = self.model.loss(
@@ -276,8 +266,7 @@ class Exp_Forecasting(Exp_Basic):
             for i, (batch_x, batch_y, mask_x, mask_y, ship_count, _, A_social, edge_features) in enumerate(test_loader):
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
-                # next_lane = test_loader.get("next_lane_onehot", None)
-                # lane_dir  = test_loader.get("lane_dir_feats", None)
+
                 # [修改] 确保 mask 和 y_truth_abs=None 被传递
                 outputs_deltas = self.model(
                     x_enc=batch_x,
@@ -286,8 +275,7 @@ class Exp_Forecasting(Exp_Basic):
                     mask_y=mask_y.to(self.device),
                     A_social_t=A_social.to(self.device),
                     edge_features=edge_features.to(self.device),
-                    # next_lane_onehot=next_lane,
-                    # lane_dir_feats=lane_dir
+
                 )
                 
                 outputs_absolute = self.model.integrate(outputs_deltas, batch_x)

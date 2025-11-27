@@ -484,8 +484,8 @@ class Model(nn.Module):
         
         # ... (num_nodes, in_features, d_model, num_heads 等参数不变) ...
         self.num_nodes = args.num_ships
-        self.in_features = 15        # 这个地方应该改成5。COG被划分成了sin/cos两部分
-        self.out_features = 2 
+        self.in_features = 7        # 这个地方应该改成7。COG被划分成了sin/cos两部分, 并添加了所处航道相对位置
+        self.out_features = 2       # 只预测经纬度增量。
         self.d_model = args.d_model
         self.num_heads = args.n_heads
         self.num_layers = args.e_layers
@@ -559,8 +559,7 @@ class Model(nn.Module):
         return y_truth_deltas
 
     def forward(self, x_enc, y_truth_abs, mask_x, mask_y, A_social_t=None, edge_features=None,
-                next_lane_onehot=None,  # [B, T_in, N, num_lanes]
-                lane_dir_feats=None     # [B, T_in, N, 2]
+
                 ):
         """
         前向传播 (已升级为 V4 - "固定预定采样" + "稳定反馈")
@@ -585,7 +584,13 @@ class Model(nn.Module):
         temporal_padding_mask_dec = ~mask_y_permuted
         attn_mask_self = subsequent_mask(self.pred_len, device)
 
-        x_enc_permuted = x_enc.permute(0, 2, 1, 3) 
+        # 分割输入
+        seq_x = x_enc[..., :7].to(device)  # [B, T_in, N, 7]
+
+        next_lane_onehot = x_enc[..., 7:15].to(device)   # 航道 one-hot 特征
+        lane_dir_feats = x_enc[..., 15:17].to(device)   # 航道方向特征
+
+        x_enc_permuted = seq_x.permute(0, 2, 1, 3) 
         enc_in = self.src_input_proj(x_enc_permuted)
         
         if next_lane_onehot is not None:

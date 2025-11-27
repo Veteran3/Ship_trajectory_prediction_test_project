@@ -160,7 +160,7 @@ if __name__ == '__main__':
     """
     python test.py \
     --model V3_0_0_ASTGNN \
-    --setting "/mnt/stu/ZhangDong/2_PhD_projects/0_0_My_model/experiments/ship_traj_V3_0_0_ASTGNN_sl8_pl12_dm64_nh8_el4_dl4_df256_Exp_30s/run_seed2024_20251126010513" \
+    --setting "/mnt/stu/ZhangDong/2_PhD_projects/0_0_My_model/experiments/ship_traj_V3_0_0_ASTGNN_sl8_pl12_dm64_nh8_el4_dl4_df256_Exp_30s/run_seed2024_20251126010446" \
     --seq_len 8 \
     --pred_len 12 \
     --d_model 64 \
