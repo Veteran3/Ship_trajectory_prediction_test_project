@@ -3,7 +3,7 @@ import os
 import torch
 import random
 import numpy as np
-from exp.exp_forecasting_V3 import Exp_Forecasting
+from exp.exp_forecasting_V4 import Exp_Forecasting
 import time
 import json
 import shutil     # [新] 用于删除文件夹
@@ -48,12 +48,10 @@ def get_args(data):
     parser = argparse.ArgumentParser(description='Ship Trajectory Prediction with Transformer')
     
     experiment_desc = """
-    v2.3.3版本
+    
 ## 实验目的：
-30s数据集
-添加航道信息
-添加 next lane 信息
-添加 lane_dir 信息
+v3.2.1  略微大概，尤其是针对损失函数以及预定采样策略
+
 
 """
     # ==================== 基本配置 ====================
@@ -63,7 +61,7 @@ def get_args(data):
                         help='status: 1 for training, 0 for testing')
     parser.add_argument('--model_id', type=str, default='ship_traj',
                         help='model id')
-    parser.add_argument('--model', type=str, default='V3_1_0_ASTGNN',
+    parser.add_argument('--model', type=str, default='V3_2_1_ASTGNN',
                         help='model name')
     
     # ==================== 数据配置 ====================

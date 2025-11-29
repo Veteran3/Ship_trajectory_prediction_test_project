@@ -6,7 +6,8 @@ from models import  V1_0_Transformer, V1_1_Transformer, \
                      V2_1_ASTGNN, V2_2_ASTGNN, \
                     V2_2_1_ASTGNN, V2_2_2_ASTGNN, V2_2_3_ASTGNN, \
                     V2_3_0_ASTGNN, V2_3_1_ASTGNN, V2_3_2_ASTGNN, V2_3_3_ASTGNN, \
-                    V3_0_0_ASTGNN, V3_1_0_ASTGNN
+                    V3_0_0_ASTGNN, V3_1_0_ASTGNN, V3_1_1_ASTGNN, V3_1_2_ASTGNN, V3_1_3_ASTGNN, \
+                    V3_2_0_ASTGNN, V3_2_1_ASTGNN
 
 
 class Exp_Basic(object):
@@ -27,6 +28,11 @@ class Exp_Basic(object):
             'V2_3_3_ASTGNN': V2_3_3_ASTGNN,
             'V3_0_0_ASTGNN': V3_0_0_ASTGNN,
             'V3_1_0_ASTGNN': V3_1_0_ASTGNN,
+            'V3_1_1_ASTGNN': V3_1_1_ASTGNN,
+            'V3_1_2_ASTGNN': V3_1_2_ASTGNN,
+            'V3_1_3_ASTGNN': V3_1_3_ASTGNN,
+            'V3_2_0_ASTGNN': V3_2_0_ASTGNN,
+            'V3_2_1_ASTGNN': V3_2_1_ASTGNN,
         }
        
 

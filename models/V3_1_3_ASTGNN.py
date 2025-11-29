@@ -7,15 +7,78 @@ import numpy as np
 from utils.get_loss_function import get_loss_function
 
 """
-针对 V2.3.3 和 V3.0.0 版本 ASTGNN 的改进版
+v3.1.1版本修改
 
-放弃V3.0.0版本中的 运动损失 (motion loss) 计算，因为实验发现其效果无提升，且增加了计算复杂度。
-添加航道信息。
-
-对模型做 One-hot Embedding（next_lane） + Lane Direction（dir） 的修改
-
-
+删除曲率损失
+更换为
+余弦相似度 Loss
 """
+
+#  曲率损失
+def direction_loss(y_pred_abs, y_truth_abs, y_mask=None, speed_threshold=1e-3, eps=1e-6):
+    """
+    计算预测轨迹与真实轨迹的方向一致性 Loss (1 - CosineSimilarity)。
+    
+    Args:
+        y_pred_abs:  [B, T, N, 2] (绝对坐标: Lat, Lon)
+        y_truth_abs: [B, T, N, 2]
+        y_mask:      [B, T, N] (1=valid, 0=pad)
+        speed_threshold: 速度阈值，真实速度小于此值的点不参与方向 Loss 计算 (避免噪音)
+        eps: 防止除零
+    
+    Returns:
+        scalar loss
+    """
+    # 0. 基础校验
+    B, T, N, D = y_pred_abs.shape
+    assert T >= 2, "Sequence length must be at least 2 to calculate direction."
+
+    # 1. 计算增量向量 (Velocity Vectors)
+    # 在 dim=1 (Time) 上进行差分
+    # [B, T, N, 2] -> [B, T-1, N, 2]
+    v_pred = y_pred_abs[:, 1:, :, :] - y_pred_abs[:, :-1, :, :]
+    v_true = y_truth_abs[:, 1:, :, :] - y_truth_abs[:, :-1, :, :]
+
+    # 2. 速度阈值掩码 (Speed Mask)
+    # 计算真实轨迹的瞬时速度模长 [B, T-1, N]
+    v_true_norm = torch.norm(v_true, dim=-1)
+    
+    # 只有当真实船只在该时刻发生了明显位移，其“方向”才有学习意义
+    # 解决 "Scale Disaster" [cite: 22] 中的微小增量导致的噪音放大问题
+    m_speed = (v_true_norm > speed_threshold).float() 
+
+    # 3. 计算余弦相似度 (Cosine Similarity)
+    # dim=-1 (Feature dim)
+    # 输出 shape: [B, T-1, N]
+    # F.cosine_similarity 内部会自动做 normalize，且数值稳定
+    cos_sim = F.cosine_similarity(v_pred, v_true, dim=-1, eps=eps)
+
+    # 4. 构造 Loss
+    # 我们希望 cos_sim 趋近于 1.0 (同向)，此时 Loss 趋近于 0
+    # 范围 [0, 2]
+    loss_dir = 1.0 - cos_sim
+
+    # 5. 综合 Mask 处理
+    # 结合 Pad Mask 和 Speed Mask
+    final_mask = m_speed
+    
+    if y_mask is not None:
+        # y_mask shape: [B, T, N]
+        # 取前 T-1 个时刻和后 T-1 个时刻的交集 (保证时刻 t 和 t+1 都是有效的)
+        # [B, T-1, N]
+        m_valid_seq = y_mask[:, :-1, :] * y_mask[:, 1:, :]
+        final_mask = final_mask * m_valid_seq
+
+    # 6. 计算加权平均
+    # 避免分母为 0
+    num_valid = final_mask.sum()
+    if num_valid < 1.0:
+        return y_pred_abs.new_tensor(0.0)
+
+    # 只计算有效点的 Loss
+    loss = (loss_dir * final_mask).sum() / num_valid
+    
+    return loss
 
 # 矩阵稀疏性测试
 def analyze_sparsity(matrix, name="Matrix"):
@@ -562,7 +625,7 @@ class Model(nn.Module):
 
                 ):
         """
-        前向传播 (已升级为 V4 - "固定预定采样" + "稳定反馈")
+        
         
         Args:
             x_enc (torch.Tensor): [B, T_in, N, D_in] - 绝对历史轨迹
@@ -576,6 +639,9 @@ class Model(nn.Module):
         # analyze_sparsity(A_social_t, "A_social_t")
 
         # 1. 准备 掩码 和 Encoder 输入
+
+        # print(mask_x)
+
         mask_x_permuted = mask_x.permute(0, 2, 1) 
         mask_y_permuted = mask_y.permute(0, 2, 1) 
         entity_mask = mask_x.any(dim=1) 
@@ -588,8 +654,12 @@ class Model(nn.Module):
         seq_x = x_enc[..., :7].to(device)  # [B, T_in, N, 7]
 
         next_lane_onehot = x_enc[..., 7:15].to(device)   # 航道 one-hot 特征
-        lane_dir_feats = x_enc[..., 15:17].to(device)   # 航道方向特征
-
+        lane_dir_feats = x_enc[..., 15:].to(device)   # 航道方向特征
+        print('########################################################')
+        print('COG features', seq_x[0, :, 0, 3:5])
+        print('next_lane_onehot:', next_lane_onehot[0, :, 0, :])
+        print('lane_dir_feats:', lane_dir_feats[0, :, 0, :])
+        print('=========================================================')
         x_enc_permuted = seq_x.permute(0, 2, 1, 3) 
         enc_in = self.src_input_proj(x_enc_permuted)
         
@@ -598,7 +668,6 @@ class Model(nn.Module):
             next_lane_onehot = next_lane_onehot.to(enc_in.device).float()
             # [B, T_in, N, num_lanes] -> [B, N, T_in, num_lanes]
             next_lane_perm = next_lane_onehot.permute(0, 2, 1, 3)
-
             # 投影到 d_model
             # 形状: [B, N, T_in, d_model]
             next_lane_embed = self.next_lane_proj(next_lane_perm)
@@ -666,13 +735,32 @@ class Model(nn.Module):
             attn_mask_self_step = attn_mask_self[:, :L, :L]
             
             # 5. 运行 Decoder
+            dec_out = dec_in
 
             A_social_t_last = A_social_t[:, -1, :, :]
             edge_features_t = edge_features[:, -1, :, :]
             # print('A_social_t_last shape:', A_social_t_last.shape)
+            if next_lane_onehot is not None:
+                base_next = next_lane_onehot[:, -1, :, :].unsqueeze(2)  # [B,N,1,8]
+                next_lane_onehot_last = base_next.expand(-1, -1, dec_out.size(2), -1)  # 不复制数据
+                
+                next_lane_onehot_last = self.next_lane_proj(next_lane_onehot_last)
+
+                # print('dec out shape:', dec_out.shape)
+                # print('next_lane_onehot_last shape:', next_lane_onehot_last.shape)
+
+                dec_out = dec_out + next_lane_onehot_last
+            
+            if lane_dir_feats is not None:
+                base_next_lane_dir = lane_dir_feats[:, -1, :, :].unsqueeze(2)
+                lane_dir_feats_last = base_next_lane_dir.expand(-1, -1, dec_out.size(2), -1)  # 不复制数据
+                lane_dir_feats_last = self.lane_dir_proj(lane_dir_feats_last)
+                # print('dec out shape:', dec_out.shape)
+                # print('lane_dir_feats_last shape:', lane_dir_feats_last.shape)
+                dec_out = dec_out + lane_dir_feats_last
             
 
-            dec_out = dec_in
+            
             for layer in self.decoder_layers:
                 dec_out = layer(
                     dec_out, memory,
@@ -797,6 +885,7 @@ class Model(nn.Module):
             torch.Tensor: loss_delta (用于反向传播)
             torch.Tensor: loss_absolute (用于日志打印, .item() 获取)
         """
+        
         y_truth_abs = y_truth_abs[..., :2]
         # 1. 准备掩码
         if mask_y.dtype == torch.float:
@@ -825,9 +914,11 @@ class Model(nn.Module):
             pred_absolute[mask_y_bool],
             y_truth_abs[mask_y_bool]
         )
+
+        loss_direction = direction_loss(pred_absolute, y_truth_abs, y_mask=mask_y)
         
         # 5. 返回两个值
-        return loss_delta, loss_absolute
+        return loss_delta, loss_absolute, loss_direction
 
     def integrate(self, pred_deltas, x_enc_history):
         """
@@ -837,3 +928,4 @@ class Model(nn.Module):
         cumulative_deltas = torch.cumsum(pred_deltas, dim=1)
         outputs_absolute = last_known_pos + cumulative_deltas
         return outputs_absolute
+    

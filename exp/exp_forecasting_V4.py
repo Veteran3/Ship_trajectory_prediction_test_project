@@ -17,6 +17,10 @@ v5 : 修复航道特征
 
 """
 
+"""
+此v4版本对应v3.2.1模型。loss为四个
+"""
+
 
 
 from exp.exp_basic import Exp_Basic
@@ -42,7 +46,7 @@ class Exp_Forecasting(Exp_Basic):
         # ... (此方法保持不变) ...
         args = self.args
 
-        if args.model == 'V3_2_0_ASTGNN':
+        if args.model in ['V3_2_0_ASTGNN', 'V3_2_1_ASTGNN']:
             from data_provider.data_loader_5_3 import ShipTrajectoryDataset
         elif args.model == 'V3_1_3_ASTGNN':
             from data_provider.data_loader_5 import ShipTrajectoryDataset
@@ -94,7 +98,7 @@ class Exp_Forecasting(Exp_Basic):
                 mask_y = mask_y.to(self.device)
                 batch_y = batch_y.float().to(self.device)
 
-                outputs_deltas = self.model(
+                outputs_deltas, intent_vectors = self.model(
                     x_enc=batch_x, 
                     y_truth_abs=None,
                     mask_x=mask_x, 
@@ -103,16 +107,17 @@ class Exp_Forecasting(Exp_Basic):
                     edge_features=edge_features.to(self.device),
                 ) 
                 
-                loss, loss_absolute, loss_curv = self.model.loss(
+                loss_delta, total_loss, loss_direction, loss_ade = self.model.loss(
                     pred_deltas=outputs_deltas,
                     y_truth_abs=batch_y,
                     x_enc=batch_x,
-                    mask_y=mask_y
+                    mask_y=mask_y,
+                    intent_vectors=intent_vectors,
                 )
                 
-                total_loss.append(loss.item())
-                total_loss_absolute.append(loss_absolute.item())
-                total_loss_curv.append(loss_curv.item())
+                total_loss.append(loss_delta.item())
+                total_loss_absolute.append(loss_ade.item())
+                total_loss_curv.append(loss_direction.item())
         
         total_loss = np.average(total_loss)
         total_loss_absolute = np.average(total_loss_absolute)
@@ -192,7 +197,7 @@ class Exp_Forecasting(Exp_Basic):
                         train_loss.append(loss.item())
                         train_loss_absolute.append(loss_absolute.item())
                 else:
-                    pred_deltas = self.model(
+                    pred_deltas, intent_vectors = self.model(
                         x_enc=batch_x,
                         y_truth_abs=batch_y[..., :2],
                         mask_x=mask_x,
@@ -201,20 +206,21 @@ class Exp_Forecasting(Exp_Basic):
                         edge_features=edge_features.to(self.device),
                     )
                     
-                    loss, loss_absolute, loss_curv = self.model.loss(
+                    loss_delta, total_loss, loss_direction, loss_abs = self.model.loss(
                         pred_deltas=pred_deltas,
                         y_truth_abs=batch_y,
                         x_enc=batch_x,
-                        mask_y=mask_y
+                        mask_y=mask_y,
+                        intent_vectors=intent_vectors,
                     )
-                    train_loss.append(loss.item())
-                    train_loss_absolute.append(loss_absolute.item())
-                    train_loss_curv.append(loss_curv.item())
+                    train_loss.append(loss_delta.item())
+                    train_loss_absolute.append(loss_abs.item())
+                    train_loss_curv.append(loss_direction.item())
                 
                 if (i + 1) % 100 == 0:
                     
                     # print(f"\titers: {i + 1}, epoch: {epoch + 1} | loss delta: {loss.item():.7f},  loss absolute: {loss_absolute.item():.7f}, motion loss: {loss_motion.item():.7f} ")
-                    print(f"\titers: {i + 1}, epoch: {epoch + 1} | loss delta: {loss.item():.7f},  loss absolute: {loss_absolute.item():.7f}, curvature loss: {loss_curv.item():.7f}")
+                    print(f"\titers: {i + 1}, epoch: {epoch + 1} | loss delta: {loss_delta.item():.7f},  loss absolute: {loss_abs.item():.7f}, curvature loss: {loss_direction.item():.7f}")
                     # ... (speed, left_time) ...
                 
                 if self.args.use_amp:
@@ -222,9 +228,9 @@ class Exp_Forecasting(Exp_Basic):
                     scaler.step(model_optim)
                     scaler.update()
                 else:
-                    w_dir = 0.0 if epoch < 5 else 0.1
+                    
                     # back_loss = loss + 0.5 * loss_absolute + 0.5 * loss_motion # [修正]
-                    back_loss = loss + 0.5 * loss_absolute  + w_dir * loss_curv # [修正]
+                    back_loss = total_loss # [修正]
                     back_loss.backward()
                     
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)

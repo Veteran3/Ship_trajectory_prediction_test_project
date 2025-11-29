@@ -7,15 +7,65 @@ import numpy as np
 from utils.get_loss_function import get_loss_function
 
 """
-针对 V2.3.3 和 V3.0.0 版本 ASTGNN 的改进版
+v3.1.1版本修改
 
-放弃V3.0.0版本中的 运动损失 (motion loss) 计算，因为实验发现其效果无提升，且增加了计算复杂度。
-添加航道信息。
-
-对模型做 One-hot Embedding（next_lane） + Lane Direction（dir） 的修改
-
+增加曲率损失
 
 """
+
+#  曲率损失
+def curvature_loss(y_pred_abs, y_truth_abs, y_mask=None, eps=1e-6):
+    """
+    y_pred_abs, y_truth_abs: [B, N, T, 2]
+    y_mask: [B, T, N] 或 [B, N, T]，1=valid, 0=pad
+    返回标量 loss_curv
+    """
+    # 确保 shape 一致
+    assert y_pred_abs.shape == y_truth_abs.shape
+    B, N, T, _ = y_pred_abs.shape
+    if T < 3:
+        # 不足三帧无法计算曲率，直接返回 0
+        return y_pred_abs.new_tensor(0.0)
+
+    # 计算离散速度向量
+    v_prev_pred = y_pred_abs[:, :, 1:-1, :] - y_pred_abs[:, :, 0:-2, :]  # [B,N,T-2,2]
+    v_next_pred = y_pred_abs[:, :, 2:  , :] - y_pred_abs[:, :, 1:-1, :]  # [B,N,T-2,2]
+
+    v_prev_true = y_truth_abs[:, :, 1:-1, :] - y_truth_abs[:, :, 0:-2, :]
+    v_next_true = y_truth_abs[:, :, 2:  , :] - y_truth_abs[:, :, 1:-1, :]
+
+    # 单位化 (防止除 0)
+    u_prev_pred = F.normalize(v_prev_pred, dim=-1, eps=eps)
+    u_next_pred = F.normalize(v_next_pred, dim=-1, eps=eps)
+
+    u_prev_true = F.normalize(v_prev_true, dim=-1, eps=eps)
+    u_next_true = F.normalize(v_next_true, dim=-1, eps=eps)
+
+    # 夹角 (转角大小)
+    cos_pred = (u_prev_pred * u_next_pred).sum(dim=-1).clamp(-1.0 + 1e-6, 1.0 - 1e-6)  # [B,N,T-2]
+    cos_true = (u_prev_true * u_next_true).sum(dim=-1).clamp(-1.0 + 1e-6, 1.0 - 1e-6)
+
+    theta_pred = torch.acos(cos_pred)  # [B,N,T-2]
+    theta_true = torch.acos(cos_true)
+
+    diff = theta_pred - theta_true      # [B,N,T-2]
+    diff_sq = diff ** 2
+
+    # mask 处理：需要三帧都有效才算这个转角
+    if y_mask is not None:
+        if y_mask.shape[1] == T:       # [B,T,N] -> [B,N,T]
+            mask = y_mask.permute(0, 2, 1)
+        else:
+            mask = y_mask              # [B,N,T]
+        # 三帧交集
+        m_valid = (mask[:, :, 0:-2] * mask[:, :, 1:-1] * mask[:, :, 2:])  # [B,N,T-2]
+        diff_sq = diff_sq * m_valid
+        denom = m_valid.sum() + eps
+    else:
+        denom = diff_sq.numel()
+
+    loss_curv = diff_sq.sum() / denom
+    return loss_curv
 
 # 矩阵稀疏性测试
 def analyze_sparsity(matrix, name="Matrix"):
@@ -562,7 +612,7 @@ class Model(nn.Module):
 
                 ):
         """
-        前向传播 (已升级为 V4 - "固定预定采样" + "稳定反馈")
+        
         
         Args:
             x_enc (torch.Tensor): [B, T_in, N, D_in] - 绝对历史轨迹
@@ -576,6 +626,9 @@ class Model(nn.Module):
         # analyze_sparsity(A_social_t, "A_social_t")
 
         # 1. 准备 掩码 和 Encoder 输入
+
+        # print(mask_x)
+
         mask_x_permuted = mask_x.permute(0, 2, 1) 
         mask_y_permuted = mask_y.permute(0, 2, 1) 
         entity_mask = mask_x.any(dim=1) 
@@ -666,13 +719,32 @@ class Model(nn.Module):
             attn_mask_self_step = attn_mask_self[:, :L, :L]
             
             # 5. 运行 Decoder
+            dec_out = dec_in
 
             A_social_t_last = A_social_t[:, -1, :, :]
             edge_features_t = edge_features[:, -1, :, :]
             # print('A_social_t_last shape:', A_social_t_last.shape)
+            if next_lane_onehot is not None:
+                base_next = next_lane_onehot[:, -1, :, :].unsqueeze(2)  # [B,N,1,8]
+                next_lane_onehot_last = base_next.expand(-1, -1, dec_out.size(2), -1)  # 不复制数据
+                
+                next_lane_onehot_last = self.next_lane_proj(next_lane_onehot_last)
+
+                # print('dec out shape:', dec_out.shape)
+                # print('next_lane_onehot_last shape:', next_lane_onehot_last.shape)
+
+                dec_out = dec_out + next_lane_onehot_last
+            
+            if lane_dir_feats is not None:
+                base_next_lane_dir = lane_dir_feats[:, -1, :, :].unsqueeze(2)
+                lane_dir_feats_last = base_next_lane_dir.expand(-1, -1, dec_out.size(2), -1)  # 不复制数据
+                lane_dir_feats_last = self.lane_dir_proj(lane_dir_feats_last)
+                # print('dec out shape:', dec_out.shape)
+                # print('lane_dir_feats_last shape:', lane_dir_feats_last.shape)
+                dec_out = dec_out + lane_dir_feats_last
             
 
-            dec_out = dec_in
+            
             for layer in self.decoder_layers:
                 dec_out = layer(
                     dec_out, memory,
@@ -825,9 +897,11 @@ class Model(nn.Module):
             pred_absolute[mask_y_bool],
             y_truth_abs[mask_y_bool]
         )
+
+        loss_curv = curvature_loss(pred_absolute, y_truth_abs, y_mask=mask_y)
         
         # 5. 返回两个值
-        return loss_delta, loss_absolute
+        return loss_delta, loss_absolute, loss_curv
 
     def integrate(self, pred_deltas, x_enc_history):
         """
@@ -837,3 +911,4 @@ class Model(nn.Module):
         cumulative_deltas = torch.cumsum(pred_deltas, dim=1)
         outputs_absolute = last_known_pos + cumulative_deltas
         return outputs_absolute
+    

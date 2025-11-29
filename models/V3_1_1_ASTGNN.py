@@ -7,13 +7,10 @@ import numpy as np
 from utils.get_loss_function import get_loss_function
 
 """
-针对 V2.3.3 和 V3.0.0 版本 ASTGNN 的改进版
+v3.1.0版本修改
 
-放弃V3.0.0版本中的 运动损失 (motion loss) 计算，因为实验发现其效果无提升，且增加了计算复杂度。
-添加航道信息。
-
-对模型做 One-hot Embedding（next_lane） + Lane Direction（dir） 的修改
-
+Decoder中 也加入 航道 one-hot 特征 和 航道方向特征，不过这个是静态的
+只获取 Encoder输入的最后一个时间步的航道特征，经过线性投影后加到 Decoder输入上
 
 """
 
@@ -562,7 +559,7 @@ class Model(nn.Module):
 
                 ):
         """
-        前向传播 (已升级为 V4 - "固定预定采样" + "稳定反馈")
+        
         
         Args:
             x_enc (torch.Tensor): [B, T_in, N, D_in] - 绝对历史轨迹
@@ -666,13 +663,32 @@ class Model(nn.Module):
             attn_mask_self_step = attn_mask_self[:, :L, :L]
             
             # 5. 运行 Decoder
+            dec_out = dec_in
 
             A_social_t_last = A_social_t[:, -1, :, :]
             edge_features_t = edge_features[:, -1, :, :]
             # print('A_social_t_last shape:', A_social_t_last.shape)
+            if next_lane_onehot is not None:
+                base_next = next_lane_onehot[:, -1, :, :].unsqueeze(2)  # [B,N,1,8]
+                next_lane_onehot_last = base_next.expand(-1, -1, dec_out.size(2), -1)  # 不复制数据
+                
+                next_lane_onehot_last = self.next_lane_proj(next_lane_onehot_last)
+
+                # print('dec out shape:', dec_out.shape)
+                # print('next_lane_onehot_last shape:', next_lane_onehot_last.shape)
+
+                dec_out = dec_out + next_lane_onehot_last
+            
+            if lane_dir_feats is not None:
+                base_next_lane_dir = lane_dir_feats[:, -1, :, :].unsqueeze(2)
+                lane_dir_feats_last = base_next_lane_dir.expand(-1, -1, dec_out.size(2), -1)  # 不复制数据
+                lane_dir_feats_last = self.lane_dir_proj(lane_dir_feats_last)
+                # print('dec out shape:', dec_out.shape)
+                # print('lane_dir_feats_last shape:', lane_dir_feats_last.shape)
+                dec_out = dec_out + lane_dir_feats_last
             
 
-            dec_out = dec_in
+            
             for layer in self.decoder_layers:
                 dec_out = layer(
                     dec_out, memory,
