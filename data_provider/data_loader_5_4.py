@@ -12,6 +12,7 @@ import json
 from multiprocessing import Pool, cpu_count
 from functools import partial
 import pickle
+from collections import Counter
 warnings.filterwarnings('ignore')
 
 """
@@ -23,7 +24,39 @@ warnings.filterwarnings('ignore')
 4.智能缓存失效检测
 """
 
+def debug_dir_feats_distribution(lanes, df_lanes):
+    """
+    粗略扫一遍 df_lanes，对每个 (lane_name, seq) 计算一次方向特征，
+    看 next_lanes_to_dir_features 本身是不是经常输出 (0,0,0,0)。
+    """
+    from collections import Counter
 
+    cnt_total = 0
+    cnt_nonzero = 0
+    cnt_zero = 0
+
+    # 只看 center 航道，因为 find_nearest_lane 只对 center 起作用
+    df_center = df_lanes[df_lanes['lane_role'] == 'center']
+
+    for _, row in df_center.iterrows():
+        lane_name = row['lane_name']
+        seq = row['seq']
+        next_lanes = get_next_lane_static(lane_name, seq, df_lanes)
+
+        feats = next_lanes_to_dir_features(next_lanes, lanes)
+        # 按你现在的定义 feats: [cos1, sin1, cos2, sin2]
+        norm = np.linalg.norm(feats.reshape(2, 2), axis=-1)  # 两个候选向量的模长
+        if (norm > 1e-4).any():
+            cnt_nonzero += 1
+        else:
+            cnt_zero += 1
+        cnt_total += 1
+
+    print("\n========== [DEBUG] next_lanes_to_dir_features on lane_table ==========")
+    print(f"总 center 行数: {cnt_total}")
+    print(f"  至少一个非零方向的行数: {cnt_nonzero}  ({cnt_nonzero / (cnt_total+1e-6):.3f})")
+    print(f"  完全为零的行数:       {cnt_zero}      ({cnt_zero / (cnt_total+1e-6):.3f})")
+    print("=========================================================\n")
 # ============================================================================
 # 缓存管理器
 # ============================================================================
@@ -565,7 +598,67 @@ class ShipTrajectoryDataset(Dataset):
         print("Lane lat range:", float(lane_lat.min()), " ~ ", float(lane_lat.max()))
         print("================================================")
     
-    
+    def debug_lane_lookup_stats(self, max_samples=50):
+        """
+        简单统计一下航道查找 + next_lanes 的覆盖情况。
+        不影响训练，只是打印一些比例。
+        """
+        assert self.lane_lookup_cache is not None, "lane_lookup_cache 还没构建，请先跑一遍 __precompute_lane_lookup__"
+
+        B = min(max_samples, len(self.lane_lookup_cache))
+
+        total_valid = 0          # mask=1 的点
+        lookup_none = 0          # lookup 直接 None 的点
+        lookup_ok = 0            # lookup 有结果的点
+        has_next = 0             # next_lanes 非空
+        no_next = 0              # next_lanes 为空
+
+        lane_name_counter = Counter()
+        no_next_counter = Counter()   # 记录哪些 (lane_name, seq) 没有 next_lanes
+
+        for idx in range(B):
+            lookup_sample = self.lane_lookup_cache[idx]   # [T][N]
+            mask_sample = self.mask_x[idx]                # [T, N]
+
+            T, N = mask_sample.shape
+            for t in range(T):
+                for n in range(N):
+                    if not mask_sample[t, n]:
+                        continue
+
+                    total_valid += 1
+                    info = lookup_sample[t][n]
+
+                    if info is None:
+                        lookup_none += 1
+                        continue
+
+                    lookup_ok += 1
+                    lane_name = info['lane_name']
+                    seq = info['seq']
+                    lane_name_counter[lane_name] += 1
+
+                    next_lanes = info['next_lanes']
+                    if next_lanes is None or len(next_lanes) == 0:
+                        no_next += 1
+                        no_next_counter[(lane_name, seq)] += 1
+                    else:
+                        has_next += 1
+
+        print("\n========== [DEBUG] Lane Lookup Stats ==========")
+        print(f"总有效 AIS 点 (mask=1): {total_valid}")
+        print(f"  lookup 为 None 的点数: {lookup_none}  ({lookup_none / (total_valid+1e-6):.3f})")
+        print(f"  lookup 有结果的点数: {lookup_ok}  ({lookup_ok / (total_valid+1e-6):.3f})")
+        print(f"    其中 next_lanes 非空: {has_next}  ({has_next / (lookup_ok+1e-6):.3f})")
+        print(f"         next_lanes 为空: {no_next}  ({no_next / (lookup_ok+1e-6):.3f})")
+        print("\n  按 lane_name 统计命中次数（前 10 个）：")
+        for name, cnt in lane_name_counter.most_common(10):
+            print(f"    {name}: {cnt}")
+
+        print("\n  next_lanes 为空最常见的 (lane_name, seq)（前 10 个）：")
+        for (name, seq), cnt in no_next_counter.most_common(10):
+            print(f"    ({name}, seq={seq}): {cnt}")
+        print("===============================================\n")
     def __read_data__(self):
         """加载数据"""
         full_path = os.path.join(self.root_path, self.data_path)

@@ -20,26 +20,29 @@ v3.2.0版本修改
 # [新增loss函数] Lane Alignment Loss (航道对齐损失) 让预测向量和意图向量的夹角趋近于 0
 # ============================================================================
 
-def compute_lane_alignment_loss(pred_deltas, intent_vectors, mask_y):
+def compute_lane_alignment_loss(pred_deltas, intent_vectors, mask_y, v_thresh=1e-3):
     """
-    pred_deltas:    [B, T, N, 2] (模型的输出)
-    intent_vectors: [B, T, N, 2] (Intent Module 计算出的加权航道方向)
+    pred_deltas:    [B, T, N, 2]
+    intent_vectors: [B, T, N, 2]
+    mask_y:         [B, T, N]
     """
-    # 1. 计算余弦相似度
-    # dim=-1 表示在 (lat, lon) 维度上计算
-    # 结果范围 [-1, 1], 1 表示完全同向
-    cos_sim = F.cosine_similarity(pred_deltas, intent_vectors, dim=-1, eps=1e-6)
+    # 1) 意图是否有效：norm > 1e-4
+    intent_norm  = intent_vectors.norm(dim=-1)        # [B,T,N]
+    intent_valid = intent_norm > 1e-4
 
-    # 2. 构造 Loss
-    # 我们希望 sim = 1, 所以 Loss = 1 - sim
-    loss_align = 1.0 - cos_sim
+    # 2) 速度是否足够大
+    speed        = pred_deltas.norm(dim=-1)           # [B,T,N]
+    speed_valid  = speed > v_thresh
 
-    # 3. Mask 处理
-    if mask_y.dtype != torch.bool: mask_y = mask_y.bool()
-    num_valid = mask_y.sum() + 1e-6
-    
-    loss_align = (loss_align * mask_y).sum() / num_valid
-    
+    # 3) 综合有效 mask：既有目标点，又有意图，又在运动
+    valid = mask_y.bool() & intent_valid & speed_valid
+    if valid.sum() == 0:
+        return pred_deltas.new_tensor(0.0)
+
+    # 4) 只在 valid 的地方做对齐
+    cos_sim    = F.cosine_similarity(pred_deltas, intent_vectors, dim=-1, eps=1e-6)  # [B,T,N]
+    loss_align = (1.0 - cos_sim)[valid].mean()
+
     return loss_align
 
 # ============================================================================
@@ -510,7 +513,7 @@ class Model(nn.Module):
             x_enc: [B, T_in, N, D_in]
         """
         device = x_enc.device
-
+        B, T, N, _ = x_enc.shape
         # 1. 准备掩码
         mask_x_permuted = mask_x.permute(0, 2, 1) 
         mask_y_permuted = mask_y.permute(0, 2, 1) 
@@ -537,7 +540,7 @@ class Model(nn.Module):
             # 根据你之前的 transform_features, 应该是在最后两维
             hist_cog = x_enc_permuted[..., -2:] 
             hist_lane_feats = lane_dir_feats.permute(0, 2, 1, 3) # [B, N, T, 4]
-            
+    
             # 计算历史意图向量
             hist_intent, _ = self.intent_module(hist_cog, hist_lane_feats)
             
@@ -664,100 +667,115 @@ class Model(nn.Module):
         
         return output * final_mask, intent_vectors
 
-    def loss(self, pred_deltas, y_truth_abs, x_enc, mask_y, intent_vectors, epoch=None):
+    def loss(
+        self,
+        pred_deltas,           # [B,T,N,2]
+        y_truth_abs,           # [B,T,N,2]
+        x_enc,                 # [B,T_in,N,D]
+        mask_y,                # [B,T,N]
+        intent_vectors=None,   # [B,T,N,2] or None
+        v_thresh=1e-3,         # 判定“在动”的速度阈值
+        target_ratio=0.3,      # 意图项期望占主 loss 的比例（你可以改成 0.2/0.4 等）
+        w_intent_max=1.0       # 意图项权重上限，避免过大
+    ):
         """
-        Args:
-            pred_deltas: [B, T, N, 2]
-            y_truth_abs: [B, T, N, 2]
-            x_enc: [B, T_in, N, D]
-            mask_y: [B, T, N]
-            intent_vectors: [B, T, N, 2]
+        返回:
+            total_loss:    标量，用于 backward
+            loss_delta:    增量 MSE
+            loss_absolute: 绝对轨迹 MSE
+            loss_intent:   意图对齐损失 (1 - cos)
+            w_intent:      当前 batch 使用的意图权重
         """
 
-        # if epoch is not None:
-        #     if epoch < 3:
-        #         w_align = 0.0
-        #         w_fde = 0.0 # 也就是 weighted_abs 退化为普通 abs
-        #     else:
-        #         w_align = 0.007  # 恢复目标权重
-        #         w_fde = 0.02    # 恢复目标权重
-        # else:
-        #     w_align = 0.0
-        #     w_fde = 0.0
+        # ------------ 1. 基础两项：完全等价于你之前的实现 ------------
 
+        # 只用前两维 (lon,lat)
         y_truth_abs = y_truth_abs[..., :2]
+
+        # mask -> bool
         if mask_y.dtype == torch.float:
             mask_y_bool = mask_y.bool()
         else:
             mask_y_bool = mask_y
 
-        # 0. 计算基础的增量 MSE Loss
+        # (1) 真值增量
         y_truth_deltas = self._compute_truth_deltas(x_enc, y_truth_abs)
-        
+
+        # (2) 增量 MSE
         loss_delta = self.criterion(
-            pred_deltas[mask_y_bool], 
+            pred_deltas[mask_y_bool],
             y_truth_deltas[mask_y_bool]
         )
-        
-        # 1. 计算绝对坐标轨迹
+
+        # (3) 预测绝对轨迹
         pred_absolute = self.integrate(pred_deltas, x_enc)
-        
-        # 计算基础 diff
-        diff = pred_absolute - y_truth_abs
-        
-        # -----------------------------------------------------------
-        # [监控项] 原始 ADE (Average Displacement Error)
-        # 这就是你原本的 loss_absolute，数值代表真实的物理均方误差
-        # 不乘时间权重，仅用于日志监控
-        # -----------------------------------------------------------
-        # mse_raw = (diff ** 2).sum(dim=-1) # [B, T, N]
-        num_valid = mask_y.sum() + 1e-6
+
+        # (4) 绝对坐标 MSE
         loss_absolute = self.criterion(
             pred_absolute[mask_y_bool],
             y_truth_abs[mask_y_bool]
         )
 
-        # -----------------------------------------------------------
-        # [优化项] 加权绝对 Loss (Weighted Absolute Loss)
-        # 赋予序列末尾更大的权重，强迫模型"对齐终点"
-        # -----------------------------------------------------------
-        T = pred_absolute.shape[1]
-        # 权重: [1.0, 1.4, 1.8, ..., 5.0]
-        steps = torch.linspace(1.0, 5.0, steps=T, device=pred_absolute.device)
-        time_weights = steps.view(1, T, 1, 1) # [1, T, 1, 1]
-        
-        # 均方误差 * 时间权重
-        weighted_mse = (diff ** 2 * time_weights).sum(dim=-1) # [B, T, N]
-        loss_weighted_abs = (weighted_mse * mask_y).sum() / num_valid
-        
-        # -----------------------------------------------------------
-        # 4. 意图对齐损失 (Lane Alignment Loss)
-        # -----------------------------------------------------------
-        # 计算余弦相似度 (dim=-1 在 lat/lon 维度计算)
-        cos_sim = F.cosine_similarity(pred_deltas, intent_vectors, dim=-1, eps=1e-6)
-        loss_align_map = 1.0 - cos_sim
-        loss_align = (loss_align_map * mask_y).sum() / num_valid
+        # ------------ 2. 第三项：意图对齐损失 (替代原来的 loss_direction) ------------
 
-        # -----------------------------------------------------------
-        # 5. 最终组合 (用于反向传播)
-        # -----------------------------------------------------------
-        # 注意：这里我们用 loss_weighted_abs 进入 total_loss，而不是 loss_ade
+        if intent_vectors is None:
+            # 如果没传意图，就直接置 0
+            loss_intent = pred_deltas.new_tensor(0.0)
+        else:
+            # 只在有船的地方算
+            mask = mask_y_bool  # [B,T,N]
 
+            # (1) 意图是否有效：norm > 1e-4
+            intent_norm  = intent_vectors.norm(dim=-1)      # [B,T,N]
+            intent_valid = intent_norm > 1e-4
+
+            # (2) 预测有没有在动：速度 > v_thresh
+            speed        = pred_deltas.norm(dim=-1)         # [B,T,N]
+            speed_valid  = speed > v_thresh
+
+            # (3) 综合有效 mask
+            valid = mask & intent_valid & speed_valid
+            num_valid = valid.sum()
+
+            if num_valid == 0:
+                loss_intent = pred_deltas.new_tensor(0.0)
+            else:
+                cos_sim = F.cosine_similarity(
+                    pred_deltas, intent_vectors,
+                    dim=-1, eps=1e-6
+                )                                           # [B,T,N]
+                loss_align_map = 1.0 - cos_sim             # [B,T,N]
+                loss_intent    = loss_align_map[valid].mean()
+
+        # ------------ 3. 自适应算三个 loss 的比重 ------------
+
+        # 你指定的固定权重
+        w_delta = 1.0
+        w_abs   = 0.5
+
+        # 主 loss（不含意图）的当前大小，用来做基准
         with torch.no_grad():
-            target_fde_frac   = 0.5  # 想让 FDE 贡献约占 loss_delta 的比例
-            target_align_frac = 0.5  # 想让对齐贡献约占 loss_delta 的比例
+            loss_main = w_delta * loss_delta.detach() + w_abs * loss_absolute.detach()
 
-            eps = 1e-6
-            w_fde   = target_fde_frac   * loss_delta.detach() / (loss_weighted_abs.detach() + eps)
-            w_align = target_align_frac * loss_delta.detach() / (loss_align.detach() + eps)
+            if loss_intent.detach().item() < 1e-8:
+                # 意图为 0 时，权重直接设 0，避免除零
+                w_intent = torch.tensor(0.0, device=loss_main.device)
+            else:
+                # 期望: w_intent * loss_intent ≈ target_ratio * loss_main
+                w_intent_raw = target_ratio * loss_main / (loss_intent.detach() + 1e-6)
+                # 裁剪一下，避免过大
+                w_intent = torch.clamp(w_intent_raw, min=0.0, max=w_intent_max)
 
-        total_loss = loss_delta + w_fde * loss_weighted_abs + w_align * loss_align
+        # 注意：这里 w_intent 是一个 0 维 tensor，参与计算图的是 loss_intent 本身，
+        # w_intent 是从 detach() 出来的，不会干扰梯度方向，只是缩放大小。
+        total_loss = (
+            w_delta * loss_delta +
+            w_abs   * loss_absolute 
+            # w_intent * loss_intent
+        )
 
-        # 6. 计算方向一致性 Loss (仅监控)
-        loss_direction = direction_loss(pred_absolute, y_truth_abs, y_mask=mask_y)
-        
-        # 返回值增加了 loss_ade
-        return loss_delta, total_loss, loss_direction, loss_absolute, (loss_weighted_abs, loss_align)
+        # 你可以在训练日志里把 w_intent.item() 打印出来，看看它在训练中的变化
+        return total_loss, loss_delta, loss_absolute, loss_intent, w_intent
 
     def integrate(self, pred_deltas, x_enc_history):
         # pred_deltas, _ = pred_deltas 
@@ -766,3 +784,26 @@ class Model(nn.Module):
         cumulative_deltas = torch.cumsum(pred_deltas, dim=1)
         outputs_absolute = last_known_pos + cumulative_deltas
         return outputs_absolute
+
+    @torch.no_grad()
+    def eval_truth_intent_alignment(self, y_truth_abs, intent_vectors, mask_y):
+        # y_truth_abs:   [B,T,N,2]
+        # intent_vectors:[B,T,N,2]
+        # mask_y:        [B,T,N]
+
+        # 真值增量
+        truth_deltas = y_truth_abs[:, 1:, :, :] - y_truth_abs[:, :-1, :, :]  # [B,T-1,N,2]
+        intent       = intent_vectors[:, 1:, :, :]                           # 对齐时间维
+
+        intent_norm  = intent.norm(dim=-1)
+        intent_valid = intent_norm > 1e-4
+        speed        = truth_deltas.norm(dim=-1)
+        speed_valid  = speed > 1e-3
+
+        valid = mask_y[:, 1:, :].bool() & intent_valid & speed_valid
+        if valid.sum() == 0:
+            return torch.tensor(0.0, device=y_truth_abs.device)
+
+        cos_sim = F.cosine_similarity(truth_deltas, intent, dim=-1, eps=1e-6)
+        loss_truth_intent = (1.0 - cos_sim)[valid].mean()
+        return loss_truth_intent

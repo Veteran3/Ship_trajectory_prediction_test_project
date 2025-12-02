@@ -516,55 +516,6 @@ class ShipTrajectoryDataset(Dataset):
         
         # 加载数据
         self.__read_data__()
-        self._debug_lon_lat_ranges()
-    
-    def _debug_lon_lat_ranges(self):
-        """
-        打印 AIS 轨迹和航道中心线的经纬度范围，用于 sanity check。
-        只在 __init__ 里调用一次就行。
-        """
-        import numpy as np
-
-        # 1. 把 data_x 里的 lon/lat 反归一化到物理空间
-        x_phys = self.data_x.copy()   # [num_samples, T_in, N, D]
-
-        # 假设 feature 顺序: [lon, lat, SOG, COG,...]
-        if self.scale_type == 'standard':
-            x_phys[..., 0] = x_phys[..., 0] * self.std[0] + self.mean[0]  # lon
-            x_phys[..., 1] = x_phys[..., 1] * self.std[1] + self.mean[1]  # lat
-        elif self.scale_type == 'minmax':
-            x_phys[..., 0] = x_phys[..., 0] * (self.max_val[0] - self.min_val[0]) + self.min_val[0]
-            x_phys[..., 1] = x_phys[..., 1] * (self.max_val[1] - self.min_val[1]) + self.min_val[1]
-
-        lon_all = x_phys[..., 0].reshape(-1)
-        lat_all = x_phys[..., 1].reshape(-1)
-
-        print("========== [DEBUG] AIS 轨迹经纬度范围 ==========")
-        print("AIS lon range: ", float(lon_all.min()), " ~ ", float(lon_all.max()))
-        print("AIS lat range: ", float(lat_all.min()), " ~ ", float(lat_all.max()))
-
-        # 2. 收集所有航道中心线上的点
-        all_lane_points = []
-        for name, info in self.lanes.items():
-            center = info.get("center", None)
-            if center is None:
-                continue
-            coords = np.array(center.coords)   # shape [L, 2] -> (lon, lat)
-            all_lane_points.append(coords)
-
-        if len(all_lane_points) == 0:
-            print("[WARN] lanes 里面没有 center 几何，检查 lanes 加载逻辑")
-            return
-
-        all_lane_points = np.concatenate(all_lane_points, axis=0)
-        lane_lon = all_lane_points[:, 0]
-        lane_lat = all_lane_points[:, 1]
-
-        print("========== [DEBUG] 航道中心线经纬度范围 ==========")
-        print("Lane lon range:", float(lane_lon.min()), " ~ ", float(lane_lon.max()))
-        print("Lane lat range:", float(lane_lat.min()), " ~ ", float(lane_lat.max()))
-        print("================================================")
-    
     
     def __read_data__(self):
         """加载数据"""
